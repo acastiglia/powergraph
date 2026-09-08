@@ -1,4 +1,4 @@
-package io.hammerhead.karooexttemplate.extension
+package com.anthonycastiglia.karoo.powergraph.extension
 
 import io.hammerhead.karooext.extension.KarooExtension
 

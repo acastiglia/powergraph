@@ -1,11 +1,10 @@
-package io.hammerhead.karooexttemplate
+package com.anthonycastiglia.karoo.powergraph
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import io.hammerhead.karooext.KarooSystemService
-import io.hammerhead.karooexttemplate.screens.MainScreen
-import io.hammerhead.karooexttemplate.theme.AppTheme
+import com.anthonycastiglia.karoo.powergraph.screens.MainScreen
+import com.anthonycastiglia.karoo.powergraph.theme.AppTheme
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
