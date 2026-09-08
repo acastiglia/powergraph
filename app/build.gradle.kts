@@ -5,11 +5,11 @@ plugins {
 }
 
 android {
-    namespace = "io.hammerhead.karooexttemplate"
+    namespace = "com.anthonycastiglia.karoo.powergraph"
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "io.hammerhead.karooexttemplate"
+        applicationId = "com.anthonycastiglia.karoo.powergraph"
         minSdk = 23
         targetSdk = 34
         versionCode = 1
