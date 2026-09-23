@@ -1,5 +1,9 @@
 <resources>
-    <string name="app_name">template</string>
+    <string name="app_name">Power Graph</string>
     <string name="hello_karoo">Hello Karoo!</string>
-    <string name="extension_name">template</string>
+    <string name="extension_name">Power Graph</string>
+    <string name="datatype_power_graph">Power</string>
+    <string name="datatype_power_graph_desc">Rolling graph of current power output</string>
+    <string name="datatype_heart_rate_graph">HR</string>
+    <string name="datatype_heart_rate_graph_desc">Rolling graph of current heart rate</string>
 </resources>

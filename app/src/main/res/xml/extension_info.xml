@@ -2,7 +2,18 @@
 <ExtensionInfo
     displayName="@string/extension_name"
     icon="@drawable/ic_launcher_foreground"
-    id="template-id"
+    id="powergraph"
     scansDevices="false">
-    <!-- DataType ... -->
+    <DataType
+        typeId="power-graph"
+        displayName="@string/datatype_power_graph"
+        description="@string/datatype_power_graph_desc"
+        graphical="true"
+        icon="@drawable/chart" />
+    <DataType
+        typeId="heart-rate-graph"
+        displayName="@string/datatype_heart_rate_graph"
+        description="@string/datatype_heart_rate_graph_desc"
+        graphical="true"
+        icon="@drawable/chart" />
 </ExtensionInfo>
