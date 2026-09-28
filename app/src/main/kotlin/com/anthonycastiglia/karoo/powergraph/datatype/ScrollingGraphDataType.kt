@@ -3,11 +3,8 @@ package com.anthonycastiglia.karoo.powergraph.datatype
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.Rect
-import android.graphics.RectF
 import android.graphics.Typeface
 import android.util.Log
 import android.util.TypedValue
@@ -15,6 +12,8 @@ import android.view.View
 import android.widget.RemoteViews
 import androidx.core.graphics.createBitmap
 import com.anthonycastiglia.karoo.powergraph.R.id.graph_image
+import com.anthonycastiglia.karoo.powergraph.R.id.max_value
+import com.anthonycastiglia.karoo.powergraph.R.id.value
 import com.anthonycastiglia.karoo.powergraph.R.id.value_end
 import com.anthonycastiglia.karoo.powergraph.R.id.value_start
 import com.anthonycastiglia.karoo.powergraph.R.layout.view_scrolling_graph
@@ -36,13 +35,22 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlin.random.Random
 import java.util.concurrent.ConcurrentLinkedDeque
 import kotlin.time.Duration
-import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Duration.Companion.minutes
+
+/**
+ * The values carried by a [StreamState] flow, skipping the states that carry none -- a sensor
+ * still searching, or dropped out. Skipping rather than substituting leaves a gap in the
+ * timestamps of whatever consumes them.
+ */
+private fun Flow<StreamState>.singleValues(): Flow<Double> =
+    mapNotNull { (it as? StreamState.Streaming)?.dataPoint?.singleValue }
 
 /**
  * Generic scrolling bar graph over any single-value [StreamState] source: samples at roughly
@@ -65,32 +73,37 @@ class ScrollingGraphDataType(
 ) : DataTypeImpl(extension, typeId) {
 
     /**
-     * Generic buffered view of a [StreamState] flow, sampled at [samplingInterval] and
-     * trimmed to a trailing [bufferWindow]. Call [start] once (it suspends for as long as
-     * [source] keeps emitting); any number of consumers can call [snapshot] concurrently to
-     * get the current buffered samples.
+     * Buffered view of a flow of values, each stamped with the time it arrived, sampled at
+     * [samplingInterval] and trimmed to a trailing [bufferWindow]. Call [start] once (it suspends
+     * for as long as [source] keeps emitting); any number of consumers can call [snapshot]
+     * concurrently to get the current buffered values.
      *
-     * Backed by [ConcurrentLinkedDeque] rather than an immutable list rebuilt on every
-     * accepted sample: [start] is the only writer, and its `addLast`/`pollFirst` calls are
-     * O(1) with no bulk reallocation, and safe to run concurrently with [snapshot] without an
-     * explicit lock -- [ConcurrentLinkedDeque] handles that internally. [snapshot] still does
-     * one copy into a [List], since callers need indexed access a deque can't provide, but
-     * that's the only copy anywhere in this class, and it happens on read rather than write.
+     * Takes plain values rather than whatever carried them, leaving callers to map and filter
+     * their own source upstream -- unpacking on read would repeat that work over the same
+     * unchanged entries every time a reader redraws, which happens far more often than values
+     * arrive. Anything a caller filters out simply leaves a gap in the timestamps.
+     *
+     * Backed by [ConcurrentLinkedDeque] rather than an immutable list rebuilt on every accepted
+     * value: [start] is the only writer, and its `addLast`/`pollFirst` calls are O(1) with no
+     * bulk reallocation, and safe to run concurrently with [snapshot] without an explicit lock --
+     * [ConcurrentLinkedDeque] handles that internally. [snapshot] still does one copy into a
+     * [List], since callers need indexed access a deque can't provide, but that's the only copy
+     * anywhere in this class, and it happens on read rather than write.
      */
     private class BufferedDataStream(
-        private val source: Flow<StreamState>,
+        private val source: Flow<Double>,
         private val samplingInterval: Duration,
         private val bufferWindow: Duration,
     ) {
-        private val buffer = ConcurrentLinkedDeque<Pair<Long, StreamState>>()
+        private val buffer = ConcurrentLinkedDeque<Pair<Long, Double>>()
         private var lastSampleAt = 0L
 
         suspend fun start() {
-            source.collect { state ->
+            source.collect { value ->
                 val now = System.currentTimeMillis()
                 if (now - lastSampleAt >= samplingInterval.inWholeMilliseconds) {
                     lastSampleAt = now
-                    buffer.addLast(now to state)
+                    buffer.addLast(now to value)
                     while ((buffer.peekFirst()?.first ?: now).let { now - it > bufferWindow.inWholeMilliseconds }) {
                         buffer.pollFirst()
                     }
@@ -98,8 +111,8 @@ class ScrollingGraphDataType(
             }
         }
 
-        /** Read-only snapshot of the buffered samples, oldest first. */
-        fun snapshot(): List<Pair<Long, StreamState>> = buffer.toList()
+        /** Read-only snapshot of the buffered readings, oldest first. */
+        fun snapshot(): List<Pair<Long, Double>> = buffer.toList()
     }
 
     private val tag = "ScrollingGraphDataType[$typeId]"
@@ -113,10 +126,10 @@ class ScrollingGraphDataType(
     // independently -- an exception in one shouldn't silently cancel the other, since they're
     // otherwise unrelated.
     private val extensionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-    private val buffer = BufferedDataStream(dataSource, SAMPLE_INTERVAL_MS.milliseconds, WINDOW_MS.milliseconds)
+    private val buffer = BufferedDataStream(dataSource.singleValues(), SAMPLE_INTERVAL, WINDOW)
 
     // Zone thresholds for per-bar coloring, kept live rather than fetched once in case they
-    // change while this instance is running. Left empty (flat color, see drawBars) when this
+    // change while this instance is running. Left empty (flat color, see ZonePalette) when this
     // metric has no zone concept and zonesSource wasn't supplied.
     private val zones = MutableStateFlow<List<UserProfile.Zone>>(emptyList())
 
@@ -180,6 +193,10 @@ class ScrollingGraphDataType(
             null
         }
 
+        // Text size for the full layout's value row, fixed for this attachment: it depends
+        // only on the tile's gridSize, which doesn't change while the view is attached.
+        val fullValueSizeSp = if (compactLayout == null) fullValueTextSizeSp(context, config.textSize, viewWidth) else 0f
+
         // In compact layout the bars only get the graph's share of the row, the value taking the
         // rest, so they're drawn at that share of the width -- the ImageView stretches them to
         // whatever it actually gets, which bars tolerate but would leave coarse if drawn at the
@@ -194,7 +211,7 @@ class ScrollingGraphDataType(
         // view attachment, instead of the shared real-data one -- there's no real ride to
         // buffer in that context, and preview data has no reason to persist beyond it.
         val activeBuffer = if (config.preview) {
-            BufferedDataStream(sampleDataStream(), SAMPLE_INTERVAL_MS.milliseconds, WINDOW_MS.milliseconds).also { preview ->
+            BufferedDataStream(sampleDataStream(), SAMPLE_INTERVAL, WINDOW).also { preview ->
                 viewScope.launch { preview.start() }
             }
         } else {
@@ -209,28 +226,51 @@ class ScrollingGraphDataType(
         val maxValue = MutableStateFlow<Double?>(null)
         if (maxValueSource != null && !config.preview) {
             viewScope.launch {
-                maxValueSource.collect { state ->
-                    (state as? StreamState.Streaming)?.dataPoint?.singleValue?.let { maxValue.value = it }
-                }
+                maxValueSource.singleValues().collect { maxValue.value = it }
             }
         }
 
         viewScope.launch {
             while (true) {
-                val samples = activeBuffer.snapshot().mapNotNull { (timestamp, state) ->
-                    (state as? StreamState.Streaming)?.dataPoint?.singleValue?.let { timestamp to it }
-                }
-                val currentValue = samples.lastOrNull()?.second ?: 0.0
+                val points = activeBuffer.snapshot()
+                val currentValue = points.lastOrNull()?.second ?: 0.0
                 // Preview has no real ride for maxValueSource to report from -- approximate it
                 // from the synthetic buffer instead, whenever this metric wants a max at all.
                 if (config.preview && maxValueSource != null) {
                     maxValue.value = maxOf(maxValue.value ?: 0.0, currentValue)
                 }
-                val bitmap = renderGraph(samples, currentValue, maxValue.value, zones.value, graphViewSize, cornerRadiusPx, compactLayout)
+                val bitmap = createBitmap(
+                    width = graphViewSize.first.coerceAtLeast(1),
+                    height = graphViewSize.second.coerceAtLeast(1)
+                )
+                val canvas = Canvas(bitmap)
+                canvas.clipToRoundedCorner(cornerRadiusPx, compactLayout?.graphSide ?: RoundedSide.BOTTOM)
+                canvas.drawBars(
+                    points,
+                    WINDOW,
+                    SAMPLE_INTERVAL,
+                    ZonePalette(zones.value)
+                )
+
+                val valueText = "${currentValue.roundToInt()}$unitLabel"
                 emitter.updateView(
                     if (compactLayout == null) {
                         RemoteViews(context.packageName, view_scrolling_graph).apply {
                             setImageViewBitmap(graph_image, bitmap)
+                            setTextViewText(value, valueText)
+                            setTextViewTextSize(value, TypedValue.COMPLEX_UNIT_SP, fullValueSizeSp)
+                            // Space is only given up to the max label while there's one to show:
+                            // a metric without a maxValueSource never has one, and one with it
+                            // has nothing to report until its first reading arrives.
+                            setViewVisibility(max_value, if (maxValue.value == null) View.GONE else View.VISIBLE)
+                            maxValue.value?.let {
+                                setTextViewText(max_value, "MAX ${it.roundToInt()}$unitLabel")
+                                setTextViewTextSize(
+                                    max_value,
+                                    TypedValue.COMPLEX_UNIT_SP,
+                                    fullValueSizeSp * MAX_TEXT_SIZE_FRACTION,
+                                )
+                            }
                         }
                     } else {
                         // Karoo sizes its own value text from config.textSize, so handing the
@@ -255,51 +295,13 @@ class ScrollingGraphDataType(
                         }
                     },
                 )
-                delay(SAMPLE_INTERVAL_MS.milliseconds)
+                delay(SAMPLE_INTERVAL)
             }
         }
         emitter.setCancellable {
             Log.d(tag, "stop view")
             viewScope.cancel() // cancels both the render loop and, if preview, its buffering coroutine
         }
-    }
-
-    /**
-     * Draw a single tile [size] wide/tall, clipped to the tile's own rounded corners
-     * ([clipToRoundedTile]). Below [COMPACT_ROW_SPAN_THRESHOLD] ([compactLayout] non-null) this
-     * is [drawBars] alone, the value being a TextView beside it rather than anything drawn here;
-     * otherwise it's [drawHeaderText] above [drawBars].
-     */
-    private fun renderGraph(
-        samples: List<Pair<Long, Double>>,
-        currentValue: Double,
-        maxValue: Double?,
-        zones: List<UserProfile.Zone>,
-        size: Pair<Int, Int>,
-        cornerRadius: Float,
-        compactLayout: CompactLayout?,
-    ): Bitmap {
-        val (width, height) = size
-        val bitmap = createBitmap(width.coerceAtLeast(1), height.coerceAtLeast(1))
-        val canvas = Canvas(bitmap)
-
-        if (compactLayout != null) {
-            // Only the corners on the tile's outer edge are rounded: the graph's other side ends
-            // mid-tile, against the value, where rounding it would clip the bars short.
-            clipToRoundedTile(canvas, width, height, cornerRadius, roundedSide = compactLayout.graphSide)
-            if (samples.isNotEmpty()) {
-                drawBars(canvas, samples, zones, 0f, width.toFloat(), 0f, height.toFloat())
-            }
-            return bitmap
-        }
-
-        clipToRoundedTile(canvas, width, height, cornerRadius)
-        val textBottom = drawHeaderText(canvas, width, height, currentValue, maxValue)
-        if (samples.isEmpty()) return bitmap
-
-        val graphTop = textBottom + height * 0.02f
-        drawBars(canvas, samples, zones, 0f, width.toFloat(), graphTop, height.toFloat())
-        return bitmap
     }
 
     /**
@@ -356,204 +358,57 @@ class ScrollingGraphDataType(
         val graphSide: RoundedSide = if (textOnRight) RoundedSide.LEFT else RoundedSide.RIGHT
     }
 
-    private enum class RoundedSide { LEFT, RIGHT, BOTH }
-
     /**
-     * Clips [canvas] to a rounded rect matching the tile's own rounded corners ([cornerRadius])
-     * -- without this, square-cornered content (bars, text) flush against the edges pokes past
-     * Karoo's rounding, which is drawn outside our bitmap and otherwise invisible to us.
+     * Text size in sp for the full layout's value row, at [MAX_TEXT_SIZE_FRACTION] of it for the
+     * max label beside it.
+     *
+     * Taken from Karoo's own [ViewConfig.textSize] for the tile, scaled down by
+     * [VALUE_FULL_SIZE_FRACTION] since unlike a plain numeric field this one shares the tile with
+     * a graph. Using textSize rather than the tile's height keeps it steady between fields of the
+     * same gridSize, whose reported viewSize varies by a pixel or two.
+     *
+     * Shrunk further if the widest values the metric could ever show wouldn't fit side by side.
+     * Both templates are measured at once because they share the row: 4 digits covers any
+     * realistic reading, and the max only takes a share when this metric has one to show.
      */
-    private fun clipToRoundedTile(
-        canvas: Canvas,
-        width: Int,
-        height: Int,
-        cornerRadius: Float,
-        roundedSide: RoundedSide = RoundedSide.BOTH,
-    ) {
-        val left = if (roundedSide == RoundedSide.RIGHT) 0f else cornerRadius
-        val right = if (roundedSide == RoundedSide.LEFT) 0f else cornerRadius
-        canvas.clipPath(
-            Path().apply {
-                addRoundRect(
-                    RectF(0f, 0f, width.toFloat(), height.toFloat()),
-                    floatArrayOf(left, left, right, right, right, right, left, left),
-                    Path.Direction.CW,
-                )
-            },
-        )
+    private fun fullValueTextSizeSp(context: Context, textSize: Int, viewWidth: Int): Float {
+        val metrics = context.resources.displayMetrics
+        val valueSp = textSize * VALUE_FULL_SIZE_FRACTION
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = VALUE_TYPEFACE }
+
+        fun widthAt(text: String, sp: Float): Float {
+            paint.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sp, metrics)
+            return paint.measureText(text)
+        }
+
+        val valueWidth = widthAt("$CURRENT_VALUE_DIGIT_TEMPLATE$unitLabel", valueSp)
+        val maxWidth = if (maxValueSource != null) {
+            widthAt("MAX $CURRENT_VALUE_DIGIT_TEMPLATE$unitLabel", valueSp * MAX_TEXT_SIZE_FRACTION)
+        } else {
+            0f
+        }
+        val worstCaseWidth = valueWidth + maxWidth
+        return if (worstCaseWidth > viewWidth) valueSp * viewWidth / worstCaseWidth else valueSp
     }
 
-    /**
-     * Draws the current/max value text row (suffixed with [unitLabel]) at the top of the
-     * tile, sized to fit both [width] and [height], and returns the y-coordinate it ends at so
-     * [renderGraph] knows where the bar graph can start. Max value is a secondary stat, drawn
-     * smaller than current value ([MAX_TEXT_SIZE_FRACTION]) and right-aligned to the tile's
-     * own right edge (mirroring how current value is right-aligned to its own fixed slot), so
-     * it grows leftward with digit count instead of shifting the whole tile's layout.
-     *
-     * Space is reserved for the max label only when this instance has a [maxValueSource] at
-     * all -- not just when [maxValue] happens to be non-null this frame -- so a metric that
-     * never shows one (e.g. heart-rate-graph) doesn't needlessly shrink its current-value text
-     * to make room for a label that's never drawn.
-     */
-    private fun drawHeaderText(canvas: Canvas, width: Int, height: Int, currentValue: Double, maxValue: Double?): Float {
-        val textSizeBasis = height * TEXT_ROW_HEIGHT_FRACTION
-        var mainTextSize = textSizeBasis * 0.7f
-        var maxTextSize = mainTextSize * MAX_TEXT_SIZE_FRACTION
-        val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.BLACK
-            typeface = VALUE_TYPEFACE
-        }
-
-        fun widthAt(text: String, size: Float): Float {
-            textPaint.textSize = size
-            return textPaint.measureText(text)
-        }
-
-        // Text size is capped by height (above) AND width (here): if the worst-case text --
-        // both fields at their widest plausible value -- would overflow the tile at the
-        // height-based sizes, shrink both proportionally until they fit. Paint.textSize is a
-        // single scalar, so this can only ever make glyphs uniformly smaller or larger -- it
-        // can't distort their proportions.
-        val currentTemplate = "$CURRENT_VALUE_DIGIT_TEMPLATE$unitLabel"
-        val maxTemplate = "MAX $CURRENT_VALUE_DIGIT_TEMPLATE$unitLabel"
-        val rightPadding = width * 0.02f
-        val currentWidthAtMainSize = widthAt(currentTemplate, mainTextSize)
-        val maxWidthAtMaxSize = if (maxValueSource != null) widthAt(maxTemplate, maxTextSize) else 0f
-        val worstCaseWidth = currentWidthAtMainSize + maxWidthAtMaxSize + rightPadding
-        if (worstCaseWidth > width) {
-            val scale = width / worstCaseWidth
-            mainTextSize *= scale
-            maxTextSize *= scale
-        }
-
-        // Ascent is negative (distance above the baseline); a small fixed top padding plus
-        // |ascent| puts the very top of the glyphs right at that padding, rather than
-        // centering the line within a much taller reserved band. Both fields share this same
-        // baseline despite their different sizes, same as any two differently-sized labels
-        // sitting on one text line.
-        textPaint.textSize = mainTextSize
-        val topPadding = height * 0.03f
-        val baselineY = topPadding - textPaint.ascent()
-        val textBottom = topPadding + (textPaint.descent() - textPaint.ascent())
-
-        // Fixed-width slot for the current-value text, sized to the widest value it will ever
-        // need to show (4 digits comfortably covers any realistic reading for these metrics).
-        // Right-aligning within that slot means extra digits grow the text leftward, keeping
-        // its right edge fixed regardless of digit count.
-        val currentSlotWidth = textPaint.measureText(currentTemplate)
-        textPaint.textAlign = Paint.Align.RIGHT
-        canvas.drawText("${currentValue.roundToInt()}$unitLabel", currentSlotWidth, baselineY, textPaint)
-
-        textPaint.textSize = maxTextSize
-        textPaint.textAlign = Paint.Align.RIGHT
-        maxValue?.let {
-            canvas.drawText("MAX ${it.roundToInt()}$unitLabel", width - rightPadding, baselineY, textPaint)
-        }
-
-        return textBottom
-    }
-
-    /**
-     * Draws [samples] (oldest first) as one filled, borderless bar per sample into the region
-     * from ([graphLeft], [graphTop]) to ([graphRight], [graphBottom]), auto-scaled to the
-     * samples' own min/max so spikes never clip off the top. [graphLeft]/[graphRight] needn't
-     * span the tile's full width -- [drawHeaderText] leaves room above for its text row, and in
-     * compact layout the bitmap itself is only part of the row. Bar position is by timestamp across the
-     * trailing [WINDOW_MS] window, not by sample index, so a real gap in data still shows up as
-     * a single wide bar rather than compressed together.
-     *
-     * Each bar spans from its own timestamp to the *next* sample's timestamp (rather than a
-     * fixed nominal width) so consecutive bars always butt up exactly. Samples aren't
-     * guaranteed to land exactly [SAMPLE_INTERVAL_MS] apart (the throttle in
-     * [BufferedDataStream.start] is "at least", not "exactly"), so a fixed bar width can fall
-     * short of the next bar's edge and leave a real gap between them.
-     *
-     * The window is anchored to the *newest sample's own timestamp*, not wall-clock time --
-     * using a freshly-read `now` here would drift against whatever clock reading
-     * [BufferedDataStream.start] used for its last trim (it runs on its own independent
-     * timer), which let the newest bar's width vary with that drift (sometimes rendering
-     * half-width) and could push the oldest bar's edges negative/off-canvas entirely
-     * (rendering as dropped). Anchoring to the data itself gives the newest bar a
-     * deterministic full width and guarantees the oldest bar's left edge is never negative,
-     * since [BufferedDataStream.start]'s trim guarantees every remaining sample is within
-     * [WINDOW_MS] of the newest one at the moment it was appended.
-     *
-     * Each bar is colored by which of [zones] its value falls into (see [ZONE_COLORS]);
-     * [zones] empty (no zonesSource, or the rider hasn't configured any) falls back to a flat
-     * color.
-     */
-    private fun drawBars(
-        canvas: Canvas,
-        samples: List<Pair<Long, Double>>,
-        zones: List<UserProfile.Zone>,
-        graphLeft: Float,
-        graphRight: Float,
-        graphTop: Float,
-        graphBottom: Float,
-    ) {
-        val graphWidth = graphRight - graphLeft
-        val graphHeight = graphBottom - graphTop
-        val values = samples.map { it.second }
-        val minValue = values.min()
-        val maxSampleValue = values.max().coerceAtLeast(minValue + 1.0) // avoid divide-by-zero on a flat set of bars
-        val windowEnd = samples.last().first + SAMPLE_INTERVAL_MS
-        val windowStart = windowEnd - WINDOW_MS
-
-        // Snap to whole pixel columns. Two bars sharing a boundary compute it from the same
-        // timestamp, so the raw float values already agree bit-for-bit, but that shared value
-        // sits at an arbitrary fractional pixel position that drifts every second as the
-        // window scrolls. Non-AA rect rasterization has to round a fractional boundary to a
-        // pixel column, and that rounding isn't guaranteed stable across draws -- rounding to
-        // an integer here removes the ambiguity rather than relying on the rasterizer.
-        fun xFor(timestamp: Long) = graphLeft + (graphWidth * (timestamp - windowStart).toFloat() / WINDOW_MS).roundToInt()
-
-        // Zones are ascending by min; a value's zone is the last one whose floor it has
-        // reached (falling back to the lowest zone for anything below the first floor). No
-        // configured zones -> flat color rather than crashing on an empty list.
-        fun colorForValue(value: Double): Int {
-            if (zones.isEmpty()) return Color.DKGRAY
-            val zoneIndex = zones.indexOfLast { value >= it.min }.coerceAtLeast(0)
-            return ZONE_COLORS.getOrElse(zoneIndex) { ZONE_COLORS.last() }
-        }
-
-        val barPaint = Paint().apply { style = Paint.Style.FILL }
-
-        samples.forEachIndexed { index, (timestamp, value) ->
-            val left = xFor(timestamp)
-            val right = if (index < samples.lastIndex) xFor(samples[index + 1].first) else xFor(windowEnd)
-            val top = graphTop + graphHeight - graphHeight * ((value - minValue) / (maxSampleValue - minValue)).toFloat()
-            barPaint.color = colorForValue(value)
-            canvas.drawRect(left, top, right, graphBottom, barPaint)
-        }
-    }
-
-    /**
-     * Synthetic values (within [previewValueRange]) for the profile editor's live preview
-     * ([ViewConfig.preview]), where there's no real ride happening to stream from.
-     */
-    private fun sampleDataStream(): Flow<StreamState> = flow {
+    private fun sampleDataStream(): Flow<Double> = flow {
         while (true) {
-            emit(
-                StreamState.Streaming(
-                    DataPoint(
-                        dataTypeId,
-                        values = mapOf(
-                            DataType.Field.SINGLE to Random.nextDouble(previewValueRange.start, previewValueRange.endInclusive),
-                        ),
-                    ),
-                ),
-            )
-            delay(SAMPLE_INTERVAL_MS.milliseconds)
+            emit(Random.nextDouble(previewValueRange.start, previewValueRange.endInclusive))
+            delay(SAMPLE_INTERVAL)
         }
     }
 
     companion object {
-        private const val SAMPLE_INTERVAL_MS = 1000L
-        private val WINDOW_MS: Long = 2.minutes.inWholeMilliseconds
-        private const val TEXT_ROW_HEIGHT_FRACTION = 0.28f
+        private val SAMPLE_INTERVAL = 1.seconds
+        private val WINDOW = 2.minutes
+        // The full layout's value, as a fraction of the size Karoo would use for a plain
+        // numeric field of the same gridSize -- smaller, since this one shares its tile with a
+        // graph. Chosen to land where the old height-derived sizing did on the tiles it was
+        // tuned against, and applies unchanged to the shortest tiles that use this layout,
+        // where anything larger would crowd out the bars.
+        private const val VALUE_FULL_SIZE_FRACTION = 0.36f
 
-        // Max value is a secondary stat, drawn at this fraction of current value's font size.
+        // Max value is a secondary stat, shown at this fraction of current value's font size.
         private const val MAX_TEXT_SIZE_FRACTION = 0.65f
 
         // Widest current-value text this metric will ever plausibly need to show (4 digits
@@ -584,11 +439,6 @@ class ScrollingGraphDataType(
         // default sans, i.e. what this drew before.
         private val VALUE_TYPEFACE: Typeface = Typeface.create("relative", Typeface.NORMAL)
 
-
-
-
-
-
         // A profile page is a 60-unit grid (see ViewConfig.gridSize); Karoo stacks up to five
         // full-width rows before it starts splitting into columns, so a single row is 60/5 = 12
         // units tall. The standard header-row-plus-graph layout needs roughly twice that for
@@ -597,18 +447,6 @@ class ScrollingGraphDataType(
         // instead (see CompactLayout). Guessed threshold awaiting on-device tuning.
         private const val SINGLE_ROW_SPAN = 12
         private const val COMPACT_ROW_SPAN_THRESHOLD = SINGLE_ROW_SPAN * 2
-
-        // Zone colors, low to high, matching common cycling zone conventions. Zone count
-        // varies by rider (typically 6-7); extra zones beyond this list reuse the last color.
-        private val ZONE_COLORS = listOf(
-            Color.GRAY, // Z1 recovery
-            Color.rgb(0, 120, 215), // Z2 endurance
-            Color.rgb(0, 150, 80), // Z3 tempo
-            Color.rgb(230, 190, 0), // Z4 threshold
-            Color.rgb(230, 120, 0), // Z5 VO2 max
-            Color.RED, // Z6 anaerobic
-            Color.rgb(120, 0, 120), // Z7 neuromuscular
-        )
 
         // How much of config.viewSize to give up so the bitmap fits its ImageView without being
         // scaled: the header's ~46px at the top, and a margin for the tile's borders.
