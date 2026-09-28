@@ -1,6 +1,62 @@
 <?xml version="1.0" encoding="utf-8"?>
-<ImageView xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/graph_image"
+<!--
+    Full layout: the current value, and the ride's max where the metric has one, in a row above
+    the graph. Both are real TextViews so Karoo lays them out at an exact size, the same way its
+    own numeric fields do; drawn into the bitmap instead, they were scaled along with it to fit a
+    tile whose real height isn't knowable from ViewConfig, and rendered at different sizes from
+    row to row.
+
+    "monospace" resolves to Relative12-Regular.otf, the face Karoo's own numeric fields use.
+
+    The graph takes the height the text row leaves, rather than the drawing working out where the
+    text ended and starting the bars below it. Both values are end-aligned in their own half, so
+    the current value's right edge stays put as its digit count changes, and the max sits against
+    the tile's edge. Hiding the max surrenders its half to the value, since a gone view takes no
+    space.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:scaleType="center" />
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:baselineAligned="true"
+        android:orientation="horizontal"
+        android:paddingTop="2dp">
+
+        <TextView
+            android:id="@+id/value"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="50"
+            android:fontFamily="monospace"
+            android:gravity="end"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:textColor="@android:color/black" />
+
+        <TextView
+            android:id="@+id/max_value"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="50"
+            android:fontFamily="monospace"
+            android:gravity="end"
+            android:includeFontPadding="false"
+            android:maxLines="1"
+            android:paddingEnd="3dp"
+            android:paddingStart="0dp"
+            android:textColor="@android:color/black" />
+
+    </LinearLayout>
+
+    <ImageView
+        android:id="@+id/graph_image"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:scaleType="fitXY" />
+
+</LinearLayout>
