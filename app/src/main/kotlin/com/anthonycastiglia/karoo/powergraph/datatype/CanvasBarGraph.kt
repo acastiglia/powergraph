@@ -38,7 +38,8 @@ fun Canvas.clipToRoundedCorner(radius: Float, roundedSide: RoundedSide) {
 /**
  * Bars are scaled to the span between the points' own lowest and highest value, so spikes
  * never clip off the top. That span is floored a unit wide, leaving a flat set of readings to
- * scale against 1 rather than divide by 0.
+ * scale against 1 rather than divide by 0. With no points at all -- nothing has arrived yet,
+ * as before a sensor connects -- there is no span to scale to, so nothing is drawn.
  *
  * Edges snap to whole pixel columns. Two bars sharing a boundary compute it from the same
  * timestamp, so the raw floats already agree bit-for-bit, but that shared value sits at an
@@ -53,6 +54,7 @@ fun Canvas.drawBars(
     sampleInterval: Duration,
     palette: ZonePalette
 ) {
+    if (points.isEmpty()) return
     val lowestValue = points.minOf { it.second }
     val highestValue = points.maxOf { it.second }.coerceAtLeast(lowestValue + 1.0)
     val valueSpan = highestValue - lowestValue

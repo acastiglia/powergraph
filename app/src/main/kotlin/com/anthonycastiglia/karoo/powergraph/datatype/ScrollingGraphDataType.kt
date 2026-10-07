@@ -1,7 +1,6 @@
 package com.anthonycastiglia.karoo.powergraph.datatype
 
 import android.content.Context
-import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
@@ -18,6 +17,10 @@ import com.anthonycastiglia.karoo.powergraph.R.id.value_end
 import com.anthonycastiglia.karoo.powergraph.R.id.value_start
 import com.anthonycastiglia.karoo.powergraph.R.layout.view_scrolling_graph
 import com.anthonycastiglia.karoo.powergraph.R.layout.view_scrolling_graph_compact
+import com.anthonycastiglia.karoo.powergraph.data.BufferedDataStream
+import com.anthonycastiglia.karoo.powergraph.datatype.ScrollingGraphDataType.Companion.COMPACT_ROW_SPAN_THRESHOLD
+import com.anthonycastiglia.karoo.powergraph.datatype.ScrollingGraphDataType.Companion.MAX_TEXT_SIZE_FRACTION
+import com.anthonycastiglia.karoo.powergraph.datatype.ScrollingGraphDataType.Companion.VALUE_FULL_SIZE_FRACTION
 import io.hammerhead.karooext.extension.DataTypeImpl
 import io.hammerhead.karooext.internal.Emitter
 import io.hammerhead.karooext.internal.ViewEmitter
@@ -27,6 +30,7 @@ import io.hammerhead.karooext.models.StreamState
 import io.hammerhead.karooext.models.UpdateGraphicConfig
 import io.hammerhead.karooext.models.UserProfile
 import io.hammerhead.karooext.models.ViewConfig
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -39,10 +43,8 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 import kotlin.random.Random
-import java.util.concurrent.ConcurrentLinkedDeque
-import kotlin.time.Duration
-import kotlin.time.Duration.Companion.seconds
 import kotlin.time.Duration.Companion.minutes
+import kotlin.time.Duration.Companion.seconds
 
 /**
  * The values carried by a [StreamState] flow, skipping the states that carry none -- a sensor
@@ -72,50 +74,16 @@ class ScrollingGraphDataType(
     private val zonesSource: Flow<List<UserProfile.Zone>>? = null,
 ) : DataTypeImpl(extension, typeId) {
 
-    /**
-     * Buffered view of a flow of values, each stamped with the time it arrived, sampled at
-     * [samplingInterval] and trimmed to a trailing [bufferWindow]. Call [start] once (it suspends
-     * for as long as [source] keeps emitting); any number of consumers can call [snapshot]
-     * concurrently to get the current buffered values.
-     *
-     * Takes plain values rather than whatever carried them, leaving callers to map and filter
-     * their own source upstream -- unpacking on read would repeat that work over the same
-     * unchanged entries every time a reader redraws, which happens far more often than values
-     * arrive. Anything a caller filters out simply leaves a gap in the timestamps.
-     *
-     * Backed by [ConcurrentLinkedDeque] rather than an immutable list rebuilt on every accepted
-     * value: [start] is the only writer, and its `addLast`/`pollFirst` calls are O(1) with no
-     * bulk reallocation, and safe to run concurrently with [snapshot] without an explicit lock --
-     * [ConcurrentLinkedDeque] handles that internally. [snapshot] still does one copy into a
-     * [List], since callers need indexed access a deque can't provide, but that's the only copy
-     * anywhere in this class, and it happens on read rather than write.
-     */
-    private class BufferedDataStream(
-        private val source: Flow<Double>,
-        private val samplingInterval: Duration,
-        private val bufferWindow: Duration,
-    ) {
-        private val buffer = ConcurrentLinkedDeque<Pair<Long, Double>>()
-        private var lastSampleAt = 0L
-
-        suspend fun start() {
-            source.collect { value ->
-                val now = System.currentTimeMillis()
-                if (now - lastSampleAt >= samplingInterval.inWholeMilliseconds) {
-                    lastSampleAt = now
-                    buffer.addLast(now to value)
-                    while ((buffer.peekFirst()?.first ?: now).let { now - it > bufferWindow.inWholeMilliseconds }) {
-                        buffer.pollFirst()
-                    }
-                }
-            }
-        }
-
-        /** Read-only snapshot of the buffered readings, oldest first. */
-        fun snapshot(): List<Pair<Long, Double>> = buffer.toList()
-    }
-
     private val tag = "ScrollingGraphDataType[$typeId]"
+
+    /**
+     * Logs any exception that ends one of this field's coroutines, in place of the default of
+     * rethrowing it on the worker thread -- which crashes the whole extension process, taking
+     * every other field down with it. Added to every scope this class launches into.
+     */
+    private val failureLogger = CoroutineExceptionHandler { _, e ->
+        Log.e(tag, "Coroutine failed", e)
+    }
 
     // Buffering starts once, at construction, and keeps running for the life of this
     // instance -- independent of any specific view attachment, so graph history isn't lost
@@ -125,12 +93,9 @@ class ScrollingGraphDataType(
     // SupervisorJob so the two coroutines launched below (buffering and zone collection) fail
     // independently -- an exception in one shouldn't silently cancel the other, since they're
     // otherwise unrelated.
-    private val extensionScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val extensionScope = CoroutineScope(Dispatchers.IO + SupervisorJob() + failureLogger)
     private val buffer = BufferedDataStream(dataSource.singleValues(), SAMPLE_INTERVAL, WINDOW)
 
-    // Zone thresholds for per-bar coloring, kept live rather than fetched once in case they
-    // change while this instance is running. Left empty (flat color, see ZonePalette) when this
-    // metric has no zone concept and zonesSource wasn't supplied.
     private val zones = MutableStateFlow<List<UserProfile.Zone>>(emptyList())
 
     init {
@@ -142,7 +107,7 @@ class ScrollingGraphDataType(
 
     override fun startStream(emitter: Emitter<StreamState>) {
         Log.d(tag, "start stream")
-        val job = CoroutineScope(Dispatchers.IO).launch {
+        val job = CoroutineScope(Dispatchers.IO + failureLogger).launch {
             dataSource.collect { state ->
                 when (state) {
                     is StreamState.Streaming -> emitter.onNext(
@@ -167,12 +132,16 @@ class ScrollingGraphDataType(
         Log.d(tag, "start view with $emitter and config $config")
         emitter.onNext(UpdateGraphicConfig(showHeader = true))
 
-        val viewScope = CoroutineScope(Dispatchers.IO)
+        // SupervisorJob so a failure in the preview buffer or max-value collection doesn't
+        // cancel the render loop alongside it. The render loop catches its own failures per
+        // frame instead, so one bad frame is skipped rather than freezing the graph.
+        val viewScope = CoroutineScope(Dispatchers.IO + SupervisorJob() + failureLogger)
 
         // config.viewSize is the full tile and only nominal at that -- Karoo reports the same
         // size for every field of a given gridSize, then lays them out a pixel or two apart. The
-        // bitmap is drawn to fit inside the smallest that tile is actually laid out at, minus
-        // Karoo's header, so it is never scaled to fit -- see HEADER_HEIGHT_PX and WIDTH_INSET_PX.
+        // bitmap is drawn at roughly the space left once Karoo's header and borders are taken
+        // out, then stretched to the exact size by the ImageView -- see HEADER_HEIGHT_PX and
+        // WIDTH_INSET_PX.
         val (viewWidth, viewHeight) = config.viewSize
         val tileGraphSize = (viewWidth - WIDTH_INSET_PX) to (viewHeight - HEADER_HEIGHT_PX).roundToInt()
 
@@ -232,69 +201,73 @@ class ScrollingGraphDataType(
 
         viewScope.launch {
             while (true) {
-                val points = activeBuffer.snapshot()
-                val currentValue = points.lastOrNull()?.second ?: 0.0
-                // Preview has no real ride for maxValueSource to report from -- approximate it
-                // from the synthetic buffer instead, whenever this metric wants a max at all.
-                if (config.preview && maxValueSource != null) {
-                    maxValue.value = maxOf(maxValue.value ?: 0.0, currentValue)
-                }
-                val bitmap = createBitmap(
-                    width = graphViewSize.first.coerceAtLeast(1),
-                    height = graphViewSize.second.coerceAtLeast(1)
-                )
-                val canvas = Canvas(bitmap)
-                canvas.clipToRoundedCorner(cornerRadiusPx, compactLayout?.graphSide ?: RoundedSide.BOTTOM)
-                canvas.drawBars(
-                    points,
-                    WINDOW,
-                    SAMPLE_INTERVAL,
-                    ZonePalette(zones.value)
-                )
-
-                val valueText = "${currentValue.roundToInt()}$unitLabel"
-                emitter.updateView(
-                    if (compactLayout == null) {
-                        RemoteViews(context.packageName, view_scrolling_graph).apply {
-                            setImageViewBitmap(graph_image, bitmap)
-                            setTextViewText(value, valueText)
-                            setTextViewTextSize(value, TypedValue.COMPLEX_UNIT_SP, fullValueSizeSp)
-                            // Space is only given up to the max label while there's one to show:
-                            // a metric without a maxValueSource never has one, and one with it
-                            // has nothing to report until its first reading arrives.
-                            setViewVisibility(max_value, if (maxValue.value == null) View.GONE else View.VISIBLE)
-                            maxValue.value?.let {
-                                setTextViewText(max_value, "MAX ${it.roundToInt()}$unitLabel")
-                                setTextViewTextSize(
-                                    max_value,
-                                    TypedValue.COMPLEX_UNIT_SP,
-                                    fullValueSizeSp * MAX_TEXT_SIZE_FRACTION,
+                try {
+                    val points = activeBuffer.snapshot()
+                    val currentValue = points.lastOrNull()?.second ?: 0.0
+                    // Preview has no real ride for maxValueSource to report from -- approximate it
+                    // from the synthetic buffer instead, whenever this metric wants a max at all.
+                    if (config.preview && maxValueSource != null) {
+                        maxValue.value = maxOf(maxValue.value ?: 0.0, currentValue)
+                    }
+                    val bitmap = createBitmap(
+                        width = graphViewSize.first.coerceAtLeast(1),
+                        height = graphViewSize.second.coerceAtLeast(1)
+                    )
+                    val canvas = Canvas(bitmap)
+                    canvas.clipToRoundedCorner(cornerRadiusPx, compactLayout?.graphSide ?: RoundedSide.BOTTOM)
+                    canvas.drawBars(
+                        points,
+                        WINDOW,
+                        SAMPLE_INTERVAL,
+                        ZonePalette(zones.value)
+                    )
+    
+                    val valueText = "${currentValue.roundToInt()}$unitLabel"
+                    emitter.updateView(
+                        if (compactLayout == null) {
+                            RemoteViews(context.packageName, view_scrolling_graph).apply {
+                                setImageViewBitmap(graph_image, bitmap)
+                                setTextViewText(value, valueText)
+                                setTextViewTextSize(value, TypedValue.COMPLEX_UNIT_SP, fullValueSizeSp)
+                                // Space is only given up to the max label while there's one to show:
+                                // a metric without a maxValueSource never has one, and one with it
+                                // has nothing to report until its first reading arrives.
+                                setViewVisibility(max_value, if (maxValue.value == null) View.GONE else View.VISIBLE)
+                                maxValue.value?.let {
+                                    setTextViewText(max_value, "MAX ${it.roundToInt()}$unitLabel")
+                                    setTextViewTextSize(
+                                        max_value,
+                                        TypedValue.COMPLEX_UNIT_SP,
+                                        fullValueSizeSp * MAX_TEXT_SIZE_FRACTION,
+                                    )
+                                }
+                            }
+                        } else {
+                            // Karoo sizes its own value text from config.textSize, so handing the
+                            // same number to a TextView reproduces it exactly -- no measuring, and
+                            // nothing left to scale it afterwards.
+                            val valueId = if (compactLayout.textOnRight) value_end else value_start
+                            val unusedValueId = if (compactLayout.textOnRight) value_start else value_end
+                            val padding = compactLayout.valuePadding
+                            RemoteViews(context.packageName, view_scrolling_graph_compact).apply {
+                                setImageViewBitmap(graph_image, bitmap)
+                                setViewVisibility(valueId, View.VISIBLE)
+                                setViewVisibility(unusedValueId, View.GONE)
+                                setTextViewText(valueId, "${currentValue.roundToInt()}$unitLabel")
+                                setTextViewTextSize(valueId, TypedValue.COMPLEX_UNIT_SP, config.textSize.toFloat())
+                                setViewPadding(
+                                    valueId,
+                                    if (compactLayout.textOnRight) 0 else padding.side,
+                                    padding.top,
+                                    if (compactLayout.textOnRight) padding.side else 0,
+                                    0,
                                 )
                             }
-                        }
-                    } else {
-                        // Karoo sizes its own value text from config.textSize, so handing the
-                        // same number to a TextView reproduces it exactly -- no measuring, and
-                        // nothing left to scale it afterwards.
-                        val valueId = if (compactLayout.textOnRight) value_end else value_start
-                        val unusedValueId = if (compactLayout.textOnRight) value_start else value_end
-                        val padding = compactLayout.valuePadding
-                        RemoteViews(context.packageName, view_scrolling_graph_compact).apply {
-                            setImageViewBitmap(graph_image, bitmap)
-                            setViewVisibility(valueId, View.VISIBLE)
-                            setViewVisibility(unusedValueId, View.GONE)
-                            setTextViewText(valueId, "${currentValue.roundToInt()}$unitLabel")
-                            setTextViewTextSize(valueId, TypedValue.COMPLEX_UNIT_SP, config.textSize.toFloat())
-                            setViewPadding(
-                                valueId,
-                                if (compactLayout.textOnRight) 0 else padding.side,
-                                padding.top,
-                                if (compactLayout.textOnRight) padding.side else 0,
-                                0,
-                            )
-                        }
-                    },
-                )
+                        },
+                    )
+                } catch (e: Exception) {
+                    Log.e(tag, "Failed to render frame", e)
+                }
                 delay(SAMPLE_INTERVAL)
             }
         }
@@ -304,14 +277,6 @@ class ScrollingGraphDataType(
         }
     }
 
-    /**
-     * Value on whichever side of the tile matches the user's configured alignment
-     * ([textOnRight]), with the graph filling the rest of the row. Used once a field is too
-     * short for a separate header row above the graph -- see [COMPACT_ROW_SPAN_THRESHOLD].
-     *
-     * The value itself isn't drawn here: view_scrolling_graph_compact.xml holds it in a TextView
-     * so Karoo lays it out at an exact size, leaving this to render only the bars.
-     */
     /**
      * Padding for the compact value's TextView, in pixels. [top] is what positions the digits
      * vertically, and is usually negative: the view is top-aligned, and a font's ascent reaches
@@ -353,6 +318,14 @@ class ScrollingGraphDataType(
         )
     }
 
+    /**
+     * Value on whichever side of the tile matches the user's configured alignment
+     * ([textOnRight]), with the graph filling the rest of the row. Used once a field is too
+     * short for a separate header row above the graph -- see [COMPACT_ROW_SPAN_THRESHOLD].
+     *
+     * The value itself isn't drawn into the bitmap: view_scrolling_graph_compact.xml holds it in
+     * a TextView so Karoo lays it out at an exact size, leaving the bitmap to render only the bars.
+     */
     private data class CompactLayout(val textOnRight: Boolean, val valuePadding: ValuePadding) {
         /** Side of the tile the graph sits against, and so the side whose corners are rounded. */
         val graphSide: RoundedSide = if (textOnRight) RoundedSide.LEFT else RoundedSide.RIGHT
@@ -401,6 +374,7 @@ class ScrollingGraphDataType(
     companion object {
         private val SAMPLE_INTERVAL = 1.seconds
         private val WINDOW = 2.minutes
+
         // The full layout's value, as a fraction of the size Karoo would use for a plain
         // numeric field of the same gridSize -- smaller, since this one shares its tile with a
         // graph. Chosen to land where the old height-derived sizing did on the tiles it was
@@ -417,16 +391,6 @@ class ScrollingGraphDataType(
         // change in digit count (e.g. HR crossing 99 to 100) never moves anything else.
         private const val CURRENT_VALUE_DIGIT_TEMPLATE = "9999"
 
-        // Matched to Karoo's own numeric fields by measuring screenshots: their digits are
-        // ~0.61x as wide as they are tall, with a stroke width ~0.12x their cap height -- a
-        // light weight, not the bold they first appear to be (they only read as heavy because
-        // they're large).
-        //
-        // This device resolves the weight families but not the condensed one: "sans-serif-black"
-        // measured visibly heavier and wider than bold, while "sans-serif-condensed" came out
-        // identical to it, i.e. no condensed face is installed to fall back to. So the weight
-        // comes from the family name and the narrowing from textScaleX.
-        //
         // The same face Karoo draws its own numeric fields in: "Relative12-Regular.otf", which
         // the device's /system/etc/fonts.xml registers as the monospace family and aliases to
         // "relative". Identified by pulling the device's fonts and matching rendered glyph
@@ -448,21 +412,15 @@ class ScrollingGraphDataType(
         private const val SINGLE_ROW_SPAN = 12
         private const val COMPACT_ROW_SPAN_THRESHOLD = SINGLE_ROW_SPAN * 2
 
-        // How much of config.viewSize to give up so the bitmap fits its ImageView without being
-        // scaled: the header's ~46px at the top, and a margin for the tile's borders.
+        // How much of config.viewSize to give up so the bitmap is drawn close to the size of its
+        // ImageView: the header's ~46px at the top, and a margin for the tile's borders.
         //
-        // Both are over-estimates on purpose, because view_scrolling_graph.xml's ImageView uses
-        // scaleType="center" -- the bitmap is drawn at its own size, centred, and whatever
-        // doesn't fit is cropped. Undersizing costs a pixel or two of slack around the bars;
-        // oversizing crops them, and crops the value's margin along with it.
-        //
-        // Any scaleType that fits instead of cropping is what to avoid here. Karoo reports one
-        // nominal viewSize per gridSize but lays the tiles out a pixel or two apart, so a bitmap
-        // scaled to fit is scaled by a different amount per row -- identical bitmaps for two
-        // fields measured 74px and 72px tall on screen. There's no way to correct for that from
-        // here, since the real height isn't in ViewConfig; drawing 1:1 sidesteps it, and leaves
-        // the text the size it was drawn, in every row. Karoo's own fields avoid the problem the
-        // same way, by drawing text into the tile rather than scaling a picture of it.
+        // The ImageViews in both layouts use scaleType="fitXY", so the bitmap is stretched to
+        // whatever size Karoo actually lays the tile out at -- which isn't in ViewConfig, and
+        // varies by a pixel or two between rows of the same gridSize. Stretching is harmless
+        // now that the bitmap holds only bars; the values are TextViews outside it, so their
+        // size never depends on how much the bitmap is scaled. These estimates only need to be
+        // close enough that the bars aren't visibly coarsened by the stretch.
         private const val HEADER_HEIGHT_PX = 48f
         private const val WIDTH_INSET_PX = 12
 
