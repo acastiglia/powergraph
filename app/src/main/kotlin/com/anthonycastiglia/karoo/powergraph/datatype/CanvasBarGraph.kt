@@ -2,38 +2,9 @@ package com.anthonycastiglia.karoo.powergraph.datatype
 
 import android.graphics.Canvas
 import android.graphics.Paint
-import android.graphics.Path
 import android.graphics.RectF
 import kotlin.math.roundToInt
 import kotlin.time.Duration
-
-/**
- * Which of a bitmap's corners to round, being the ones where it meets the edge of Karoo's tile.
- * An edge that meets something else -- the value beside it, or the row above it -- is left square,
- * since rounding there would clip the bars short of content they should run up against.
- */
-enum class RoundedSide { LEFT, RIGHT, BOTTOM }
-
-/**
- * Clips to the rounded corners Karoo draws around its tiles, which fall outside this bitmap
- * and are otherwise invisible to it -- without this, square-cornered bars flush against an
- * edge poke out past that rounding.
- *
- * Radii run clockwise from the top left corner, two per corner, as [Path.addRoundRect] takes
- * them.
- */
-fun Canvas.clipToRoundedCorner(radius: Float, roundedSide: RoundedSide) {
-    val radii = when (roundedSide) {
-        RoundedSide.LEFT -> floatArrayOf(radius, radius, 0f, 0f, 0f, 0f, radius, radius)
-        RoundedSide.RIGHT -> floatArrayOf(0f, 0f, radius, radius, radius, radius, 0f, 0f)
-        RoundedSide.BOTTOM -> floatArrayOf(0f, 0f, 0f, 0f, radius, radius, radius, radius)
-    }
-    clipPath(
-        Path().apply {
-            addRoundRect(RectF(0f, 0f, width.toFloat(), height.toFloat()), radii, Path.Direction.CW)
-        },
-    )
-}
 
 /**
  * The value range a graph's bars are drawn against: from a fixed [floor] at the bottom up to the

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
@@ -152,8 +153,7 @@ class ScrollingGraphDataType(
         val viewScope = newViewScope()
         val compactLayout = compactLayoutFor(context, config)
         val graphSize = graphBitmapSize(config, compactLayout)
-        val graphSide = compactLayout?.graphSide ?: RoundedSide.BOTTOM
-        val density = context.resources.displayMetrics.density
+        val plot = plotFor(graphSize, compactLayout, context.resources.displayMetrics.density)
         val fullValueSizeSp by lazy { fullValueTextSizeSp(context, config.textSize, config.viewSize.first) }
         val activeBuffer = bufferFor(config, viewScope)
         val maxValue = maxValueFor(config, viewScope)
@@ -166,7 +166,7 @@ class ScrollingGraphDataType(
                     if (config.preview && maxValueSource != null) {
                         maxValue.value = maxOf(maxValue.value ?: 0.0, currentValue)
                     }
-                    val graph = drawGraph(points, graphSize, density, graphSide)
+                    val graph = drawGraph(points, graphSize, plot)
                     emitter.updateView(
                         if (compactLayout == null) {
                             fullLayoutViews(context, graph, currentValue, maxValue.value, fullValueSizeSp)
@@ -281,29 +281,45 @@ class ScrollingGraphDataType(
     }
 
     /**
-     * The graph's bars at [size], clipped to the tile's rounded corners on [graphSide].
+     * Where the bars go within a graph bitmap of [size]: inset [GRAPH_PADDING_DP] from the
+     * bottom, and by the same from each side that meets the tile's border -- both sides in the
+     * full layout, and the outer one in [compactLayout], whose other side faces the value and
+     * is already spaced from it by [VALUE_GRAPH_GAP_DP].
      *
-     * The bars stand [VALUE_BOTTOM_GAP_DP] clear of the bottom, the same gap the compact value's
-     * digits sit above it, so bars and digits share a baseline and the bars' foot is visible
-     * rather than running into the tile's border.
+     * Each bottom corner that meets the border's rounded corner is rounded too, at the border's
+     * radius less the padding, so the bars' corner follows the border's curve at the same
+     * distance as their sides do. Left square, it would run right up to the curve, since a
+     * padding smaller than the border's radius only clears the border along its straight edges.
      */
+    private fun plotFor(size: Pair<Int, Int>, compactLayout: CompactLayout?, density: Float): Plot {
+        val padding = GRAPH_PADDING_DP * density
+        val padLeft = compactLayout?.textOnRight ?: true
+        val padRight = compactLayout?.textOnRight?.not() ?: true
+        val area = RectF(
+            if (padLeft) padding else 0f,
+            0f,
+            size.first - if (padRight) padding else 0f,
+            size.second - padding,
+        )
+        val radius = ((CORNER_RADIUS_DP - GRAPH_PADDING_DP) * density).coerceAtLeast(0f)
+        val bottomRight = if (padRight) radius else 0f
+        val bottomLeft = if (padLeft) radius else 0f
+        val radii = floatArrayOf(0f, 0f, 0f, 0f, bottomRight, bottomRight, bottomLeft, bottomLeft)
+        return Plot(area, Path().apply { addRoundRect(area, radii, Path.Direction.CW) })
+    }
+
+    /** Where a graph's bars go: [area] within its bitmap, clipped to [clip] at the corners. */
+    private data class Plot(val area: RectF, val clip: Path)
+
+    /** The graph's bars, drawn into [plot] of a bitmap of [size]. */
     private fun drawGraph(
         points: List<Pair<Long, Double>>,
         size: Pair<Int, Int>,
-        density: Float,
-        graphSide: RoundedSide,
+        plot: Plot,
     ): Bitmap = createBitmap(width = size.first, height = size.second).also { bitmap ->
-        val baseline = bitmap.height - VALUE_BOTTOM_GAP_DP * density
         Canvas(bitmap).apply {
-            clipToRoundedCorner(CORNER_RADIUS_DP * density, graphSide)
-            drawBars(
-                points,
-                RectF(0f, 0f, bitmap.width.toFloat(), baseline),
-                WINDOW,
-                SAMPLE_INTERVAL,
-                scale,
-                ZonePalette(zones.value),
-            )
+            clipPath(plot.clip)
+            drawBars(points, plot.area, WINDOW, SAMPLE_INTERVAL, scale, ZonePalette(zones.value))
         }
     }
 
@@ -447,10 +463,7 @@ class ScrollingGraphDataType(
         val edgePaddingPx: Int,
         val graphGapPx: Int,
         val viewHeight: Int,
-    ) {
-        /** Side of the tile the graph sits against, and so the side whose corners are rounded. */
-        val graphSide: RoundedSide = if (textOnRight) RoundedSide.LEFT else RoundedSide.RIGHT
-    }
+    )
 
     /**
      * Text size in sp for the full layout's value row, at [MAX_TEXT_SIZE_FRACTION] of it for the
@@ -583,13 +596,16 @@ class ScrollingGraphDataType(
         private const val VALUE_BOTTOM_GAP_DP = 3.5f
 
         /**
-         * Estimated corner radius of the tile itself, in dp -- ViewConfig has no field for it, so
-         * this is a guess to be tuned on-device. A fixed dp value (converted to pixels via the
-         * device's real density in drawGraph) rather than a fraction of the tile's own size,
-         * since real UI corner radii are a fixed physical size, not a percentage of their
-         * container -- deriving it from height instead would make the mismatch worse on smaller
-         * tiles, where a fixed radius is a bigger fraction of the tile.
+         * Gap between the bars and the tile's border, on every side where they meet it. The same
+         * as [VALUE_BOTTOM_GAP_DP], so the bars' foot shares a baseline with the compact value's
+         * digits, and the graph sits evenly inset from the border all round.
          */
-        private const val CORNER_RADIUS_DP = 12f
+        private const val GRAPH_PADDING_DP = VALUE_BOTTOM_GAP_DP
+
+        /**
+         * Corner radius of the tile's border, which ViewConfig doesn't expose. Measured from a
+         * screenshot as ~15px, at the same density [VALUE_BOTTOM_GAP_DP] was measured at.
+         */
+        private const val CORNER_RADIUS_DP = 7.5f
     }
 }
