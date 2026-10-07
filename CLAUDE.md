@@ -17,6 +17,6 @@ Karoo has no built-in scrolling graph field for power or heart rate; this extens
 
 ## Known rough edges
 
-`HEADER_HEIGHT_PX`, `WIDTH_INSET_PX`, `CORNER_RADIUS_DP` and `COMPACT_ROW_SPAN_THRESHOLD` in `ScrollingGraphDataType.kt` are estimates awaiting on-device tuning, since `ViewConfig` doesn't expose the real header height, laid-out tile size or tile corner radius. Flag this if touching rendering/layout code.
+`HEADER_HEIGHT_PX`, `WIDTH_INSET_PX` and `COMPACT_ROW_SPAN_THRESHOLD` in `ScrollingGraphDataType.kt` are estimates awaiting on-device tuning, since `ViewConfig` doesn't expose the real header height or laid-out tile size. Flag this if touching rendering/layout code.
 
 Git history is minimal, so don't assume prior design discussion exists outside the code's own doc comments.
