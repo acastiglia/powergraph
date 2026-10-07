@@ -1,19 +1,12 @@
-# Karoo Extensions (Template)
+# Power Graph
 
-Template repository for empty app with Karoo Extension service.
+A [Karoo](https://www.hammerhead.io/) extension that adds scrolling bar graph data fields for power and heart rate. Each graph shows the last two minutes alongside the current value, colored by your training zones.
 
-## Instructions
+<img src="docs/media/in-ride.png" alt="Power Graph during a ride" width="300">
 
-1. Clone this repository or "Use this template" on Github
-2. Update namespace in `build.gradle.kt` and `app/src/main/kotlin`
-3. Replace "template" values in `strings.xml`, `extension_info.xml`, `AndroidManifest.xml`
-4. Implement Android app experience (in `MainActivity.kt`)
-5. Implement extension functionality in `TemplateExtension.kt`
+## Data fields
 
-## Links
+- **Power**: power, with your ride max on larger fields
+- **HR**: heart rate
 
-[Documentation](https://hammerheadnav.github.io/karoo-ext/index.html)
-
-[karoo-ext source](https://github.com/hammerheadnav/karoo-ext)
-
-[Sample](https://github.com/hammerheadnav/karoo-ext/tree/master/app)
+Built with [karoo-ext](https://github.com/hammerheadnav/karoo-ext).
