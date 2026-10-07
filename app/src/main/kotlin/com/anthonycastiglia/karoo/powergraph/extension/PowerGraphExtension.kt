@@ -1,5 +1,7 @@
 package com.anthonycastiglia.karoo.powergraph.extension
 
+import com.anthonycastiglia.karoo.powergraph.data.randomDoubles
+import com.anthonycastiglia.karoo.powergraph.data.randomWalk
 import com.anthonycastiglia.karoo.powergraph.datatype.ScrollingGraphDataType
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.KarooExtension
@@ -16,7 +18,7 @@ class PowerGraphExtension : KarooExtension("powergraph", "1.0") {
                 extension = extension,
                 typeId = "power-graph",
                 dataSource = karooSystem.streamDataFlow(DataType.Type.POWER),
-                previewValueRange = 0.0..300.0,
+                previewSource = randomDoubles(min = 0.0, max = 300.0),
                 maxValueSource = karooSystem.streamDataFlow(DataType.Type.MAX_POWER),
                 zonesSource = karooSystem.consumerFlow<UserProfile>().map { it.powerZones },
             ),
@@ -24,7 +26,7 @@ class PowerGraphExtension : KarooExtension("powergraph", "1.0") {
                 extension = extension,
                 typeId = "heart-rate-graph",
                 dataSource = karooSystem.streamDataFlow(DataType.Type.HEART_RATE),
-                previewValueRange = 45.0..190.0,
+                previewSource = randomWalk(start = 120.0, min = 45.0, max = 190.0, maxStepSize = 2.0),
                 maxValueSource = null,
                 zonesSource = karooSystem.consumerFlow<UserProfile>().map { it.heartRateZones },
             )

@@ -19,6 +19,7 @@ import com.anthonycastiglia.karoo.powergraph.R.id.value_start
 import com.anthonycastiglia.karoo.powergraph.R.layout.view_scrolling_graph
 import com.anthonycastiglia.karoo.powergraph.R.layout.view_scrolling_graph_compact
 import com.anthonycastiglia.karoo.powergraph.data.BufferedDataStream
+import com.anthonycastiglia.karoo.powergraph.data.SAMPLE_INTERVAL
 import com.anthonycastiglia.karoo.powergraph.datatype.ScrollingGraphDataType.Companion.COMPACT_ROW_SPAN_THRESHOLD
 import com.anthonycastiglia.karoo.powergraph.datatype.ScrollingGraphDataType.Companion.MAX_TEXT_SIZE_FRACTION
 import com.anthonycastiglia.karoo.powergraph.datatype.ScrollingGraphDataType.Companion.VALUE_FULL_SIZE_FRACTION
@@ -39,13 +40,10 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
-import kotlin.random.Random
 import kotlin.time.Duration.Companion.minutes
-import kotlin.time.Duration.Companion.seconds
 
 /**
  * The values carried by a [StreamState] flow, skipping the states that carry none -- a sensor
@@ -61,15 +59,18 @@ private fun Flow<StreamState>.singleValues(): Flow<Double> =
  * current/max text row above, colored by [zonesSource] when supplied.
  *
  * Instantiate one per metric (power, heart rate, cadence, ...) rather than subclassing --
- * [dataSource], [unitLabel] and [previewValueRange] are metric-specific; [maxValueSource] and
+ * [dataSource], [previewSource] and [unitLabel] are metric-specific; [maxValueSource] and
  * [zonesSource] are optional since not every metric has a natural "max" stat (e.g. one already
  * tracked ride-wide by Karoo) or a zone concept (e.g. cadence has neither).
+ *
+ * [previewSource] is the synthetic data shown in the profile editor, collected afresh for each
+ * preview attachment -- see randomDoubles and randomWalk for ones shaped like real metrics.
  */
 class ScrollingGraphDataType(
     extension: String,
     typeId: String,
     private val dataSource: Flow<StreamState>,
-    private val previewValueRange: ClosedFloatingPointRange<Double>,
+    private val previewSource: Flow<Double>,
     private val unitLabel: String = "",
     private val maxValueSource: Flow<StreamState>? = null,
     private val zonesSource: Flow<List<UserProfile.Zone>>? = null,
@@ -167,7 +168,7 @@ class ScrollingGraphDataType(
                         if (compactLayout == null) {
                             fullLayoutViews(context, graph, currentValue, maxValue.value, fullValueSizeSp)
                         } else {
-                            compactLayoutViews(context, graph, currentValue, compactLayout, config.textSize)
+                            compactLayoutViews(context, graph, currentValue, compactLayout)
                         },
                     )
                 } catch (e: Exception) {
@@ -198,9 +199,11 @@ class ScrollingGraphDataType(
      */
     private fun compactLayoutFor(context: Context, config: ViewConfig): CompactLayout? =
         if (config.gridSize.second <= COMPACT_ROW_SPAN_THRESHOLD) {
+            val valueSizeSp = compactValueTextSizeSp(context, config.textSize, config.viewSize.first)
             CompactLayout(
                 textOnRight = config.alignment != ViewConfig.Alignment.LEFT,
-                valuePadding = compactValuePadding(context, config.textSize, config.viewSize.second),
+                valueSizeSp = valueSizeSp,
+                valuePadding = compactValuePadding(context, valueSizeSp, config.viewSize.second),
             )
         } else {
             null
@@ -241,7 +244,7 @@ class ScrollingGraphDataType(
      */
     private fun bufferFor(config: ViewConfig, viewScope: CoroutineScope): BufferedDataStream =
         if (config.preview) {
-            BufferedDataStream(sampleDataStream(), SAMPLE_INTERVAL, WINDOW).also { preview ->
+            BufferedDataStream(previewSource, SAMPLE_INTERVAL, WINDOW).also { preview ->
                 viewScope.launch { preview.start() }
             }
         } else {
@@ -302,19 +305,12 @@ class ScrollingGraphDataType(
         }
     }
 
-    /**
-     * The compact layout: the value beside the graph, on the side [layout] puts it.
-     *
-     * The value is sized at Karoo's own [textSize] for the tile, which is what Karoo sizes its
-     * plain numeric fields from -- so handing the same number to a TextView reproduces them
-     * exactly, with no measuring and nothing left to scale it afterwards.
-     */
+    /** The compact layout: the value beside the graph, on the side and at the size [layout] gives it. */
     private fun compactLayoutViews(
         context: Context,
         graph: Bitmap,
         currentValue: Double,
         layout: CompactLayout,
-        textSize: Int,
     ): RemoteViews {
         val valueId = if (layout.textOnRight) value_end else value_start
         val unusedValueId = if (layout.textOnRight) value_start else value_end
@@ -324,7 +320,7 @@ class ScrollingGraphDataType(
             setViewVisibility(valueId, View.VISIBLE)
             setViewVisibility(unusedValueId, View.GONE)
             setTextViewText(valueId, formatValue(currentValue))
-            setTextViewTextSize(valueId, TypedValue.COMPLEX_UNIT_SP, textSize.toFloat())
+            setTextViewTextSize(valueId, TypedValue.COMPLEX_UNIT_SP, layout.valueSizeSp)
             setViewPadding(
                 valueId,
                 if (layout.textOnRight) 0 else padding.side,
@@ -351,8 +347,8 @@ class ScrollingGraphDataType(
     private data class ValuePadding(val top: Int, val side: Int)
 
     /**
-     * Measures [ValuePadding] for text drawn at Karoo's own [ViewConfig.textSize], which is in
-     * sp and so needs the display's density applied before it means anything in pixels.
+     * Measures [ValuePadding] for text drawn at [textSizeSp], which needs the display's density
+     * applied before it means anything in pixels.
      *
      * Karoo's own fields hold their value a fixed gap above the bottom of the tile whatever its
      * height, so that's what this aims for -- but never higher than the top of the space we're
@@ -360,11 +356,11 @@ class ScrollingGraphDataType(
      * their tops off. Karoo has a little more room to play with there than extensions do: on a
      * 5-row page its own digits start slightly above where our view even begins.
      */
-    private fun compactValuePadding(context: Context, textSize: Int, viewHeight: Int): ValuePadding {
+    private fun compactValuePadding(context: Context, textSizeSp: Float, viewHeight: Int): ValuePadding {
         val metrics = context.resources.displayMetrics
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             typeface = VALUE_TYPEFACE
-            this.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, textSize.toFloat(), metrics)
+            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, textSizeSp, metrics)
         }
         val digitBounds = Rect()
         paint.getTextBounds(CURRENT_VALUE_DIGIT_TEMPLATE, 0, 1, digitBounds)
@@ -386,9 +382,39 @@ class ScrollingGraphDataType(
      * The value itself isn't drawn into the bitmap: view_scrolling_graph_compact.xml holds it in
      * a TextView so Karoo lays it out at an exact size, leaving the bitmap to render only the bars.
      */
-    private data class CompactLayout(val textOnRight: Boolean, val valuePadding: ValuePadding) {
+    private data class CompactLayout(
+        val textOnRight: Boolean,
+        val valueSizeSp: Float,
+        val valuePadding: ValuePadding,
+    ) {
         /** Side of the tile the graph sits against, and so the side whose corners are rounded. */
         val graphSide: RoundedSide = if (textOnRight) RoundedSide.LEFT else RoundedSide.RIGHT
+    }
+
+    /**
+     * Text size in sp for the compact layout's value: Karoo's own [ViewConfig.textSize] for the
+     * tile, so it matches Karoo's plain numeric fields -- unless the widest value this metric
+     * could show wouldn't fit beside the graph, in which case it's shrunk until it does.
+     *
+     * Karoo picks textSize for a value with the whole tile's width to itself, but here it only
+     * gets what [COMPACT_GRAPH_WIDTH_FRACTION] leaves, less its edge padding. Anything wider than
+     * that doesn't shrink on its own: the TextView is limited to one line, so it breaks the value
+     * onto a second line it then hides, showing 116 as "11".
+     */
+    private fun compactValueTextSizeSp(context: Context, textSize: Int, viewWidth: Int): Float {
+        val metrics = context.resources.displayMetrics
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = VALUE_TYPEFACE
+            this.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, textSize.toFloat(), metrics)
+        }
+        val worstCaseWidth = paint.measureText("$CURRENT_VALUE_DIGIT_TEMPLATE$unitLabel")
+        val valueSlotWidth = (viewWidth - WIDTH_INSET_PX) * (1 - COMPACT_GRAPH_WIDTH_FRACTION) -
+            VALUE_EDGE_PADDING_DP * metrics.density
+        return if (worstCaseWidth > valueSlotWidth) {
+            textSize * valueSlotWidth / worstCaseWidth
+        } else {
+            textSize.toFloat()
+        }
     }
 
     /**
@@ -424,15 +450,7 @@ class ScrollingGraphDataType(
         return if (worstCaseWidth > viewWidth) valueSp * viewWidth / worstCaseWidth else valueSp
     }
 
-    private fun sampleDataStream(): Flow<Double> = flow {
-        while (true) {
-            emit(Random.nextDouble(previewValueRange.start, previewValueRange.endInclusive))
-            delay(SAMPLE_INTERVAL)
-        }
-    }
-
     companion object {
-        private val SAMPLE_INTERVAL = 1.seconds
         private val WINDOW = 2.minutes
 
         /**
