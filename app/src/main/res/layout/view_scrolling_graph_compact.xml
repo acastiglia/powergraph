@@ -8,9 +8,10 @@
 
     "monospace" resolves to Relative12-Regular.otf, the face Karoo's own numeric fields use.
 
-    Both value slots exist so either side can be used without reassigning weights, which
-    RemoteViews cannot do before API 31; the unused one is hidden, and a hidden view takes no
-    space, leaving the graph and the remaining value to split the row.
+    The value's width is set from code, to a slot sized for three digits, and the graph takes
+    whatever is left. Both value slots exist so either side can be used without reordering
+    views, which RemoteViews cannot do; the unused one is hidden, and a hidden view takes no
+    space.
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -20,11 +21,10 @@
 
     <TextView
         android:id="@+id/value_start"
-        android:layout_width="0dp"
+        android:layout_width="wrap_content"
         android:layout_height="match_parent"
-        android:layout_weight="45"
         android:fontFamily="monospace"
-        android:gravity="top|start"
+        android:gravity="bottom|start"
         android:includeFontPadding="false"
         android:maxLines="1"
         android:paddingStart="3dp"
@@ -36,16 +36,15 @@
         android:id="@+id/graph_image"
         android:layout_width="0dp"
         android:layout_height="match_parent"
-        android:layout_weight="55"
+        android:layout_weight="1"
         android:scaleType="fitXY" />
 
     <TextView
         android:id="@+id/value_end"
-        android:layout_width="0dp"
+        android:layout_width="wrap_content"
         android:layout_height="match_parent"
-        android:layout_weight="45"
         android:fontFamily="monospace"
-        android:gravity="top|end"
+        android:gravity="bottom|end"
         android:includeFontPadding="false"
         android:maxLines="1"
         android:paddingStart="0dp"

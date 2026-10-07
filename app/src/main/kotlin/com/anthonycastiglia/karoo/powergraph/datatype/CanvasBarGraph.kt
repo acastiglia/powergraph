@@ -36,10 +36,29 @@ fun Canvas.clipToRoundedCorner(radius: Float, roundedSide: RoundedSide) {
 }
 
 /**
- * Bars are scaled to the span between the points' own lowest and highest value, so spikes
- * never clip off the top. That span is floored a unit wide, leaving a flat set of readings to
- * scale against 1 rather than divide by 0. With no points at all -- nothing has arrived yet,
- * as before a sensor connects -- there is no span to scale to, so nothing is drawn.
+ * The value range a graph's bars are drawn against: from a fixed [floor] at the bottom up to the
+ * highest reading in view, but never less than [minSpan] above the floor.
+ *
+ * A fixed floor keeps a bar's height meaning the same thing from one window to the next -- scaled
+ * from the window's own lowest reading instead, that reading always draws at zero height, and a
+ * small wobble fills the whole graph. [minSpan] does the same at the top, so a steady stretch of
+ * readings doesn't stretch to full height just because nothing higher is in view.
+ */
+data class GraphScale(val floor: Double, val minSpan: Double) {
+    init {
+        require(minSpan > 0) { "minSpan ($minSpan) must be positive" }
+    }
+
+    /** The value drawn at the top of the graph, for a window whose highest reading is [highestValue]. */
+    fun ceilingFor(highestValue: Double): Double = maxOf(highestValue, floor + minSpan)
+}
+
+/**
+ * Bars are drawn within [plotArea], against [scale] from its floor at the plot's bottom up to
+ * the highest point at its top, so spikes never clip off the top. The most recent reading ends
+ * at the plot's right edge. A reading below the floor draws at zero height rather than below
+ * the plot. With no points at all -- nothing has arrived yet, as before a sensor connects --
+ * nothing is drawn.
  *
  * Edges snap to whole pixel columns. Two bars sharing a boundary compute it from the same
  * timestamp, so the raw floats already agree bit-for-bit, but that shared value sits at an
@@ -50,28 +69,29 @@ fun Canvas.clipToRoundedCorner(radius: Float, roundedSide: RoundedSide) {
  */
 fun Canvas.drawBars(
     points: List<Pair<Long, Double>>,
+    plotArea: RectF,
     window: Duration,
     sampleInterval: Duration,
+    scale: GraphScale,
     palette: ZonePalette
 ) {
     if (points.isEmpty()) return
-    val lowestValue = points.minOf { it.second }
-    val highestValue = points.maxOf { it.second }.coerceAtLeast(lowestValue + 1.0)
-    val valueSpan = highestValue - lowestValue
+    val ceiling = scale.ceilingFor(points.maxOf { it.second })
+    val valueSpan = ceiling - scale.floor
 
     val windowMs = window.inWholeMilliseconds
     val windowEnd = points.last().first + sampleInterval.inWholeMilliseconds
     val windowStart = windowEnd - windowMs
     fun xFor(timestamp: Long) =
-        (width * (timestamp - windowStart).toFloat() / windowMs).roundToInt().toFloat()
+        (plotArea.left + plotArea.width() * (timestamp - windowStart).toFloat() / windowMs).roundToInt().toFloat()
 
     val barPaint = Paint().apply { style = Paint.Style.FILL }
     points.forEachIndexed { index, (timestamp, value) ->
         val left = xFor(timestamp)
         val right = if (index < points.lastIndex) xFor(points[index + 1].first) else xFor(windowEnd)
-        val barHeight = height * ((value - lowestValue) / valueSpan).toFloat()
+        val barHeight = plotArea.height() * ((value - scale.floor) / valueSpan).coerceAtLeast(0.0).toFloat()
         barPaint.color = palette.colorFor(value)
-        drawRect(left, height - barHeight, right, height.toFloat(), barPaint)
+        drawRect(left, plotArea.bottom - barHeight, right, plotArea.bottom, barPaint)
     }
 }
 
