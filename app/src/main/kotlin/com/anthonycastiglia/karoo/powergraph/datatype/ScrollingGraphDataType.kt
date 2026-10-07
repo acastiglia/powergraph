@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.util.Log
 import android.util.TypedValue
@@ -42,6 +43,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.launch
+import kotlin.math.ceil
 import kotlin.math.roundToInt
 import kotlin.time.Duration.Companion.minutes
 
@@ -59,7 +61,7 @@ private fun Flow<StreamState>.singleValues(): Flow<Double> =
  * current/max text row above, colored by [zonesSource] when supplied.
  *
  * Instantiate one per metric (power, heart rate, cadence, ...) rather than subclassing --
- * [dataSource], [previewSource] and [unitLabel] are metric-specific; [maxValueSource] and
+ * [dataSource], [previewSource], [scale] and [unitLabel] are metric-specific; [maxValueSource] and
  * [zonesSource] are optional since not every metric has a natural "max" stat (e.g. one already
  * tracked ride-wide by Karoo) or a zone concept (e.g. cadence has neither).
  *
@@ -71,6 +73,7 @@ class ScrollingGraphDataType(
     typeId: String,
     private val dataSource: Flow<StreamState>,
     private val previewSource: Flow<Double>,
+    private val scale: GraphScale,
     private val unitLabel: String = "",
     private val maxValueSource: Flow<StreamState>? = null,
     private val zonesSource: Flow<List<UserProfile.Zone>>? = null,
@@ -150,7 +153,7 @@ class ScrollingGraphDataType(
         val compactLayout = compactLayoutFor(context, config)
         val graphSize = graphBitmapSize(config, compactLayout)
         val graphSide = compactLayout?.graphSide ?: RoundedSide.BOTTOM
-        val cornerRadiusPx = CORNER_RADIUS_DP * context.resources.displayMetrics.density
+        val density = context.resources.displayMetrics.density
         val fullValueSizeSp by lazy { fullValueTextSizeSp(context, config.textSize, config.viewSize.first) }
         val activeBuffer = bufferFor(config, viewScope)
         val maxValue = maxValueFor(config, viewScope)
@@ -163,7 +166,7 @@ class ScrollingGraphDataType(
                     if (config.preview && maxValueSource != null) {
                         maxValue.value = maxOf(maxValue.value ?: 0.0, currentValue)
                     }
-                    val graph = drawGraph(points, graphSize, cornerRadiusPx, graphSide)
+                    val graph = drawGraph(points, graphSize, density, graphSide)
                     emitter.updateView(
                         if (compactLayout == null) {
                             fullLayoutViews(context, graph, currentValue, maxValue.value, fullValueSizeSp)
@@ -197,17 +200,28 @@ class ScrollingGraphDataType(
      * The value goes on whichever side matches the user's configured alignment, mirroring the
      * sample extension's CustomSpeed, which places its own value the same way for the same reason.
      */
-    private fun compactLayoutFor(context: Context, config: ViewConfig): CompactLayout? =
-        if (config.gridSize.second <= COMPACT_ROW_SPAN_THRESHOLD) {
-            val valueSizeSp = compactValueTextSizeSp(context, config.textSize, config.viewSize.first)
-            CompactLayout(
-                textOnRight = config.alignment != ViewConfig.Alignment.LEFT,
-                valueSizeSp = valueSizeSp,
-                valuePadding = compactValuePadding(context, valueSizeSp, config.viewSize.second),
-            )
-        } else {
-            null
-        }
+    private fun compactLayoutFor(context: Context, config: ViewConfig): CompactLayout? {
+        if (config.gridSize.second > COMPACT_ROW_SPAN_THRESHOLD) return null
+        val density = context.resources.displayMetrics.density
+        val edgePaddingPx = (VALUE_EDGE_PADDING_DP * density).roundToInt()
+        val graphGapPx = (VALUE_GRAPH_GAP_DP * density).roundToInt()
+        val maxSlotWidthPx = (config.viewSize.first - WIDTH_INSET_PX) * COMPACT_VALUE_MAX_WIDTH_FRACTION
+        val template = "$COMPACT_VALUE_DIGIT_TEMPLATE$unitLabel"
+        val valueSizeSp = textSizeToFitSp(
+            context,
+            template,
+            config.textSize.toFloat(),
+            maxSlotWidthPx - edgePaddingPx - graphGapPx,
+        )
+        return CompactLayout(
+            textOnRight = config.alignment != ViewConfig.Alignment.LEFT,
+            valueSizeSp = valueSizeSp,
+            valueSlotWidthPx = ceil(textWidthPx(context, template, valueSizeSp)).toInt() + edgePaddingPx + graphGapPx,
+            edgePaddingPx = edgePaddingPx,
+            graphGapPx = graphGapPx,
+            viewHeight = config.viewSize.second,
+        )
+    }
 
     /**
      * Width and height in pixels to draw the graph's bitmap at.
@@ -220,18 +234,14 @@ class ScrollingGraphDataType(
      * only bars; the values are TextViews outside it, so their size never depends on how much the
      * bitmap is scaled.
      *
-     * In [compactLayout] the bars only get the graph's share of the row, the value taking the
-     * rest, so they're drawn at that share of the width -- drawn at the full width and squeezed
-     * into half of it, they'd come out coarse.
+     * In [compactLayout] the bars only get what the value's slot leaves of the row, so they're
+     * drawn at that width -- drawn at the full width and squeezed into part of it, they'd come out
+     * coarse.
      */
     private fun graphBitmapSize(config: ViewConfig, compactLayout: CompactLayout?): Pair<Int, Int> {
         val (viewWidth, viewHeight) = config.viewSize
         val tileGraphWidth = viewWidth - WIDTH_INSET_PX
-        val width = if (compactLayout != null) {
-            (tileGraphWidth * COMPACT_GRAPH_WIDTH_FRACTION).roundToInt()
-        } else {
-            tileGraphWidth
-        }
+        val width = tileGraphWidth - (compactLayout?.valueSlotWidthPx ?: 0)
         val height = (viewHeight - HEADER_HEIGHT_PX).roundToInt()
         return width.coerceAtLeast(1) to height.coerceAtLeast(1)
     }
@@ -270,16 +280,30 @@ class ScrollingGraphDataType(
         return maxValue
     }
 
-    /** The bars alone, at [size], clipped to the tile's rounded corners on [graphSide]. */
+    /**
+     * The graph's bars at [size], clipped to the tile's rounded corners on [graphSide].
+     *
+     * The bars stand [VALUE_BOTTOM_GAP_DP] clear of the bottom, the same gap the compact value's
+     * digits sit above it, so bars and digits share a baseline and the bars' foot is visible
+     * rather than running into the tile's border.
+     */
     private fun drawGraph(
         points: List<Pair<Long, Double>>,
         size: Pair<Int, Int>,
-        cornerRadiusPx: Float,
+        density: Float,
         graphSide: RoundedSide,
     ): Bitmap = createBitmap(width = size.first, height = size.second).also { bitmap ->
+        val baseline = bitmap.height - VALUE_BOTTOM_GAP_DP * density
         Canvas(bitmap).apply {
-            clipToRoundedCorner(cornerRadiusPx, graphSide)
-            drawBars(points, WINDOW, SAMPLE_INTERVAL, ZonePalette(zones.value))
+            clipToRoundedCorner(CORNER_RADIUS_DP * density, graphSide)
+            drawBars(
+                points,
+                RectF(0f, 0f, bitmap.width.toFloat(), baseline),
+                WINDOW,
+                SAMPLE_INTERVAL,
+                scale,
+                ZonePalette(zones.value),
+            )
         }
     }
 
@@ -305,7 +329,15 @@ class ScrollingGraphDataType(
         }
     }
 
-    /** The compact layout: the value beside the graph, on the side and at the size [layout] gives it. */
+    /**
+     * The compact layout: the value beside the graph, in [layout]'s fixed-width slot on its side.
+     *
+     * The slot is sized for [COMPACT_VALUE_DIGIT_TEMPLATE], so a value wider than that -- a
+     * four-digit power reading -- is shrunk to fit for as long as it lasts, and its bottom padding
+     * recomputed to keep it on the same baseline. Left at full size it wouldn't shrink on its
+     * own: the TextView is limited to one line, so it would break the value onto a second line
+     * it then hides, showing 1160 as "116".
+     */
     private fun compactLayoutViews(
         context: Context,
         graph: Bitmap,
@@ -314,70 +346,96 @@ class ScrollingGraphDataType(
     ): RemoteViews {
         val valueId = if (layout.textOnRight) value_end else value_start
         val unusedValueId = if (layout.textOnRight) value_start else value_end
-        val padding = layout.valuePadding
+        val valueText = formatValue(currentValue)
+        val valueSizeSp = textSizeToFitSp(
+            context,
+            valueText,
+            layout.valueSizeSp,
+            (layout.valueSlotWidthPx - layout.edgePaddingPx - layout.graphGapPx).toFloat(),
+        )
         return RemoteViews(context.packageName, view_scrolling_graph_compact).apply {
             setImageViewBitmap(graph_image, graph)
             setViewVisibility(valueId, View.VISIBLE)
             setViewVisibility(unusedValueId, View.GONE)
-            setTextViewText(valueId, formatValue(currentValue))
-            setTextViewTextSize(valueId, TypedValue.COMPLEX_UNIT_SP, layout.valueSizeSp)
+            setInt(valueId, "setWidth", layout.valueSlotWidthPx)
+            setTextViewText(valueId, valueText)
+            setTextViewTextSize(valueId, TypedValue.COMPLEX_UNIT_SP, valueSizeSp)
             setViewPadding(
                 valueId,
-                if (layout.textOnRight) 0 else padding.side,
-                padding.top,
-                if (layout.textOnRight) padding.side else 0,
+                if (layout.textOnRight) layout.graphGapPx else layout.edgePaddingPx,
                 0,
+                if (layout.textOnRight) layout.edgePaddingPx else layout.graphGapPx,
+                compactValueBottomPadding(context, valueSizeSp, layout.viewHeight),
             )
         }
     }
 
     private fun formatValue(value: Double) = "${value.roundToInt()}$unitLabel"
 
-    /**
-     * Padding for the compact value's TextView, in pixels. [top] is what positions the digits
-     * vertically, and is usually negative: the view is top-aligned, and a font's ascent reaches
-     * higher than its digits do, so the text has to be pulled up by at least that difference for
-     * the numbers to start where the view does.
-     *
-     * Positioning from the top rather than using bottom gravity, even though the target is a gap
-     * below the digits: gravity puts the *descender* against the bottom, and since digits have
-     * none, the numbers ride up by that much and lose their tops off the top of the tile.
-     * Karoo positions its own text by baseline, which a TextView won't do for us.
-     */
-    private data class ValuePadding(val top: Int, val side: Int)
+    /** Width in pixels of [text] drawn in [VALUE_TYPEFACE] at [textSizeSp]. */
+    private fun textWidthPx(context: Context, text: String, textSizeSp: Float): Float =
+        valuePaint(context, textSizeSp).measureText(text)
 
     /**
-     * Measures [ValuePadding] for text drawn at [textSizeSp], which needs the display's density
-     * applied before it means anything in pixels.
-     *
-     * Karoo's own fields hold their value a fixed gap above the bottom of the tile whatever its
-     * height, so that's what this aims for -- but never higher than the top of the space we're
-     * given, since on the shortest tiles the digits fill it entirely and anything more would cut
-     * their tops off. Karoo has a little more room to play with there than extensions do: on a
-     * 5-row page its own digits start slightly above where our view even begins.
+     * [textSizeSp], shrunk just enough for [text] to fit within [availableWidthPx] if it
+     * wouldn't already, less a pixel of slack: a TextView rounds a line's measured width up to
+     * a whole pixel, so text sized to fill the width exactly can still wrap.
      */
-    private fun compactValuePadding(context: Context, textSizeSp: Float, viewHeight: Int): ValuePadding {
-        val metrics = context.resources.displayMetrics
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = VALUE_TYPEFACE
-            textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, textSizeSp, metrics)
-        }
+    private fun textSizeToFitSp(context: Context, text: String, textSizeSp: Float, availableWidthPx: Float): Float {
+        val fitWidthPx = availableWidthPx - 1
+        val textWidthPx = textWidthPx(context, text, textSizeSp)
+        return if (textWidthPx > fitWidthPx) textSizeSp * fitWidthPx / textWidthPx else textSizeSp
+    }
+
+    private fun valuePaint(context: Context, textSizeSp: Float) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        typeface = VALUE_TYPEFACE
+        textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, textSizeSp, context.resources.displayMetrics)
+    }
+
+    /**
+     * Bottom padding in pixels for the compact value's TextView at [textSizeSp], which is what
+     * positions the digits vertically. Usually negative: the view is bottom-aligned, which puts
+     * the font's *descender* against the bottom, and since digits have none, the padding has to
+     * pull the text down by the descent for the digits themselves to sit [VALUE_BOTTOM_GAP_DP]
+     * above the bottom. Karoo positions its own text by baseline, which a TextView won't do for us.
+     *
+     * Measured from the bottom because that's the edge Karoo's own fields hold their value
+     * against, a fixed gap above it whatever the tile's height -- and because the bottom is
+     * where the view really ends. Positioning from the top would need the view's height, and
+     * [ViewConfig.viewSize] is only nominal: fields of the same gridSize are laid out at
+     * different real heights, which left their values sitting at different gaps from the bottom.
+     *
+     * The gap does shrink on the shortest tiles, where the digits fill the space we're given
+     * entirely and keeping it would cut their tops off. That's the one place the nominal height
+     * is used, as the best estimate available. Karoo has a little more room to play with there
+     * than extensions do: on a 5-row page its own digits start slightly above where our view
+     * even begins.
+     */
+    private fun compactValueBottomPadding(context: Context, textSizeSp: Float, viewHeight: Int): Int {
+        val paint = valuePaint(context, textSizeSp)
         val digitBounds = Rect()
-        paint.getTextBounds(CURRENT_VALUE_DIGIT_TEMPLATE, 0, 1, digitBounds)
+        paint.getTextBounds(COMPACT_VALUE_DIGIT_TEMPLATE, 0, 1, digitBounds)
 
         val contentHeight = viewHeight - HEADER_HEIGHT_PX
-        val bottomGap = VALUE_BOTTOM_GAP_DP * metrics.density
-        val digitsTop = maxOf(contentHeight - bottomGap, digitBounds.height().toFloat())
-        return ValuePadding(
-            top = (digitsTop + paint.ascent()).roundToInt(),
-            side = (VALUE_EDGE_PADDING_DP * metrics.density).roundToInt(),
-        )
+        val bottomGap = VALUE_BOTTOM_GAP_DP * context.resources.displayMetrics.density
+        val baselineAboveBottom = minOf(bottomGap, contentHeight - digitBounds.height())
+        return (baselineAboveBottom - paint.descent()).roundToInt()
     }
 
     /**
      * Value on whichever side of the tile matches the user's configured alignment
-     * ([textOnRight]), with the graph filling the rest of the row. Used once a field is too
-     * short for a separate header row above the graph -- see [COMPACT_ROW_SPAN_THRESHOLD].
+     * ([textOnRight]), in a slot [valueSlotWidthPx] wide, with the graph filling the rest of the
+     * row. Used once a field is too short for a separate header row above the graph -- see
+     * [COMPACT_ROW_SPAN_THRESHOLD].
+     *
+     * The slot is just wide enough for [COMPACT_VALUE_DIGIT_TEMPLATE] at [valueSizeSp], plus
+     * [edgePaddingPx] against the tile's edge and [graphGapPx] against the graph, so the value
+     * sits beside the graph rather than leaving a gap for digits it rarely needs. Every metric
+     * uses the same template, so compact graphs stacked on one page end at the same x.
+     *
+     * [valueSizeSp] is Karoo's own [ViewConfig.textSize] for the tile, matching its plain numeric
+     * fields, unless the template wouldn't fit within [COMPACT_VALUE_MAX_WIDTH_FRACTION] of the
+     * row at that size -- Karoo picks textSize for a value with the whole tile's width to itself.
      *
      * The value itself isn't drawn into the bitmap: view_scrolling_graph_compact.xml holds it in
      * a TextView so Karoo lays it out at an exact size, leaving the bitmap to render only the bars.
@@ -385,36 +443,13 @@ class ScrollingGraphDataType(
     private data class CompactLayout(
         val textOnRight: Boolean,
         val valueSizeSp: Float,
-        val valuePadding: ValuePadding,
+        val valueSlotWidthPx: Int,
+        val edgePaddingPx: Int,
+        val graphGapPx: Int,
+        val viewHeight: Int,
     ) {
         /** Side of the tile the graph sits against, and so the side whose corners are rounded. */
         val graphSide: RoundedSide = if (textOnRight) RoundedSide.LEFT else RoundedSide.RIGHT
-    }
-
-    /**
-     * Text size in sp for the compact layout's value: Karoo's own [ViewConfig.textSize] for the
-     * tile, so it matches Karoo's plain numeric fields -- unless the widest value this metric
-     * could show wouldn't fit beside the graph, in which case it's shrunk until it does.
-     *
-     * Karoo picks textSize for a value with the whole tile's width to itself, but here it only
-     * gets what [COMPACT_GRAPH_WIDTH_FRACTION] leaves, less its edge padding. Anything wider than
-     * that doesn't shrink on its own: the TextView is limited to one line, so it breaks the value
-     * onto a second line it then hides, showing 116 as "11".
-     */
-    private fun compactValueTextSizeSp(context: Context, textSize: Int, viewWidth: Int): Float {
-        val metrics = context.resources.displayMetrics
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            typeface = VALUE_TYPEFACE
-            this.textSize = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, textSize.toFloat(), metrics)
-        }
-        val worstCaseWidth = paint.measureText("$CURRENT_VALUE_DIGIT_TEMPLATE$unitLabel")
-        val valueSlotWidth = (viewWidth - WIDTH_INSET_PX) * (1 - COMPACT_GRAPH_WIDTH_FRACTION) -
-            VALUE_EDGE_PADDING_DP * metrics.density
-        return if (worstCaseWidth > valueSlotWidth) {
-            textSize * valueSlotWidth / worstCaseWidth
-        } else {
-            textSize.toFloat()
-        }
     }
 
     /**
@@ -467,11 +502,18 @@ class ScrollingGraphDataType(
 
         /**
          * Widest current-value text this metric will ever plausibly need to show (4 digits
-         * comfortably covers any realistic reading for power/HR) -- used to size a fixed slot for
-         * it, in both the standard header row and the compact side-by-side layout, so a change in
-         * digit count (e.g. HR crossing 99 to 100) never moves anything else.
+         * comfortably covers any realistic reading for power/HR) -- used to size the full layout's
+         * header row, so a change in digit count (e.g. HR crossing 99 to 100) never moves
+         * anything else.
          */
         private const val CURRENT_VALUE_DIGIT_TEMPLATE = "9999"
+
+        /**
+         * Value text the compact layout's slot is sized for: 3 digits, which covers every heart
+         * rate and all but sprint power. A four-digit value shrinks to fit the slot instead of
+         * widening it, which is only for the moments a rider is least likely to be looking.
+         */
+        private const val COMPACT_VALUE_DIGIT_TEMPLATE = "999"
 
         /**
          * The same face Karoo draws its own numeric fields in: "Relative12-Regular.otf", which
@@ -516,11 +558,10 @@ class ScrollingGraphDataType(
         private const val WIDTH_INSET_PX = 12
 
         /**
-         * Share of the row the bars get in compact layout, the value taking the rest. Must match
-         * the layout_weights in view_scrolling_graph_compact.xml, which are what actually decide
-         * the split -- this only sizes the bitmap drawn for it.
+         * Most of the row the compact layout's value slot may take, the graph keeping the rest.
+         * Text that would need more at Karoo's own textSize is shrunk to fit instead.
          */
-        private const val COMPACT_GRAPH_WIDTH_FRACTION = 0.55f
+        private const val COMPACT_VALUE_MAX_WIDTH_FRACTION = 0.45f
 
         /**
          * Gap between the compact value and the tile edge it's aligned to. Karoo's own fields
@@ -528,6 +569,12 @@ class ScrollingGraphDataType(
          * that scales with the tile.
          */
         private const val VALUE_EDGE_PADDING_DP = 3f
+
+        /**
+         * Gap between the compact value and the graph beside it, so the digits don't run up
+         * against the bars. In dp for the same reason as [VALUE_EDGE_PADDING_DP].
+         */
+        private const val VALUE_GRAPH_GAP_DP = 6f
 
         /**
          * Gap Karoo leaves between its value and the bottom of the tile. Flat, not a share of
@@ -538,7 +585,7 @@ class ScrollingGraphDataType(
         /**
          * Estimated corner radius of the tile itself, in dp -- ViewConfig has no field for it, so
          * this is a guess to be tuned on-device. A fixed dp value (converted to pixels via the
-         * device's real density in startView) rather than a fraction of the tile's own size,
+         * device's real density in drawGraph) rather than a fraction of the tile's own size,
          * since real UI corner radii are a fixed physical size, not a percentage of their
          * container -- deriving it from height instead would make the mismatch worse on smaller
          * tiles, where a fixed radius is a bigger fraction of the tile.
