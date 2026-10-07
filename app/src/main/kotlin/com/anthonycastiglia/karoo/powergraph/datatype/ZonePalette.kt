@@ -20,23 +20,26 @@ class ZonePalette(private val zones: List<UserProfile.Zone>) {
     fun colorFor(value: Double): Int {
         if (zones.isEmpty()) return UNZONED_COLOR
         val zoneIndex = zones.indexOfLast { value >= it.min }.coerceAtLeast(0)
-        return ZONE_COLORS.getOrElse(zoneIndex) { ZONE_COLORS.last() }
+        return TrainingZone.entries.getOrElse(zoneIndex) { TrainingZone.entries.last() }.color
+    }
+
+    /**
+     * Training zones low to high, matching common cycling zone conventions, each matched to the
+     * rider's configured zone at the same index. Zone count varies by rider (typically 6-7);
+     * zones beyond the last entry here reuse its color.
+     */
+    private enum class TrainingZone(val color: Int) {
+        RECOVERY(Color.GRAY),
+        ENDURANCE(Color.rgb(0, 120, 215)),
+        TEMPO(Color.rgb(0, 150, 80)),
+        THRESHOLD(Color.rgb(230, 190, 0)),
+        VO2_MAX(Color.rgb(230, 120, 0)),
+        ANAEROBIC(Color.RED),
+        NEUROMUSCULAR(Color.rgb(120, 0, 120)),
     }
 
     companion object {
         /** For a metric with no zones, or a rider who hasn't configured any. */
         private val UNZONED_COLOR = Color.DKGRAY
-
-        // Low to high, matching common cycling zone conventions. Zone count varies by rider
-        // (typically 6-7); extra zones beyond this list reuse the last color.
-        private val ZONE_COLORS = listOf(
-            Color.GRAY, // Z1 recovery
-            Color.rgb(0, 120, 215), // Z2 endurance
-            Color.rgb(0, 150, 80), // Z3 tempo
-            Color.rgb(230, 190, 0), // Z4 threshold
-            Color.rgb(230, 120, 0), // Z5 VO2 max
-            Color.RED, // Z6 anaerobic
-            Color.rgb(120, 0, 120), // Z7 neuromuscular
-        )
     }
 }
