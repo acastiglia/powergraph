@@ -263,10 +263,10 @@ class ScrollingGraphDataType(
         val bottomRight = if (padRight) radius else 0f
         val bottomLeft = if (padLeft) radius else 0f
         val radii = floatArrayOf(0f, 0f, 0f, 0f, bottomRight, bottomRight, bottomLeft, bottomLeft)
-        return Plot(area, Path().apply { addRoundRect(area, radii, Path.Direction.CW) })
+        return Plot(area, Path().apply { addRoundRect(area, radii, Path.Direction.CW) }, MIN_BAR_HEIGHT_DP * density)
     }
 
-    private data class Plot(val area: RectF, val clip: Path)
+    private data class Plot(val area: RectF, val clip: Path, val minBarHeightPx: Float)
 
     private fun drawGraph(
         points: List<Pair<Long, Double>>,
@@ -275,7 +275,7 @@ class ScrollingGraphDataType(
     ): Bitmap = createBitmap(width = size.first, height = size.second).also { bitmap ->
         Canvas(bitmap).apply {
             clipPath(plot.clip)
-            drawBars(points, plot.area, WINDOW, SAMPLE_INTERVAL, scale, ZonePalette(zones.value))
+            drawBars(points, plot.area, WINDOW, SAMPLE_INTERVAL, scale, ZonePalette(zones.value), plot.minBarHeightPx)
         }
     }
 
@@ -500,5 +500,8 @@ class ScrollingGraphDataType(
 
         /** Measured from a screenshot as ~15px; ViewConfig doesn't expose it. */
         private const val CORNER_RADIUS_DP = 7.5f
+
+        /** Keeps zero readings visible as a thin line instead of an empty gap. */
+        private const val MIN_BAR_HEIGHT_DP = 1f
     }
 }
