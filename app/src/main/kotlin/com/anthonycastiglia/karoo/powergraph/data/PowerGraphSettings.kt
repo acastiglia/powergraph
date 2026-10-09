@@ -6,6 +6,7 @@ import androidx.core.content.edit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
@@ -15,58 +16,65 @@ import kotlinx.coroutines.flow.stateIn
 enum class Aggregation { MAX, AVERAGE, NORMALIZED }
 
 /**
- * Persisted settings for the data fields, each exposed as a [StateFlow] whose value is always
- * current and updates on every change -- including a change from another instance of this
- * class in this process, such as the settings screen updating a value a running data field
- * reads. The [SharedPreferences] stay the source of truth; the flows are kept live in [scope]
- * and are read-only to callers, who write through the setters.
- *
- * One screen for all fields: power smoothing applies to the power field only, while zone colors and
- * aggregations are set separately for power and heart rate.
+ * Persisted settings for the data fields, one [FieldSettings] per [GRAPH_FIELDS] entry, all
+ * built up front. The [SharedPreferences] stay the source of truth; the flows are kept live in
+ * [scope].
  */
 class PowerGraphSettings(context: Context, scope: CoroutineScope) {
     private val prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val byField = GRAPH_FIELDS.associate { it.settingsKey to FieldSettings(prefs, it, scope) }
 
-    val powerSmoothingSeconds: StateFlow<Int> = prefs.stateFlowOf(KEY_POWER_SMOOTHING_SECONDS, scope) {
-        getInt(KEY_POWER_SMOOTHING_SECONDS, DEFAULT_POWER_SMOOTHING_SECONDS)
+    init {
+        require(byField.size == GRAPH_FIELDS.size) { "Every GraphField needs its own settingsKey" }
     }
 
-    val powerZoneColors: StateFlow<Boolean> = prefs.stateFlowOf(KEY_POWER_ZONE_COLORS, scope) {
-        getBoolean(KEY_POWER_ZONE_COLORS, DEFAULT_ZONE_COLORS)
+    /** [field]'s settings; [field] must be one of [GRAPH_FIELDS]. */
+    fun forField(field: GraphField): FieldSettings = byField.getValue(field.settingsKey)
+
+    private companion object {
+        const val PREFS_NAME = "powergraph_settings"
+    }
+}
+
+/**
+ * One [field]'s settings, each exposed as a [StateFlow] whose value is always current and
+ * updates on every change -- including a change from another instance in this process, such as
+ * the settings screen updating a value a running data field reads. The flows are read-only;
+ * callers write through the setters. Keys are prefixed with [GraphField.settingsKey].
+ *
+ * [smoothingSeconds] stays zero for a field without [GraphField.smoothing].
+ */
+class FieldSettings internal constructor(
+    private val prefs: SharedPreferences,
+    field: GraphField,
+    scope: CoroutineScope,
+) {
+    private val smoothingKey = "${field.settingsKey}_smoothing_seconds"
+    private val zoneColorsKey = "${field.settingsKey}_zone_colors"
+    private val aggregationsKey = "${field.settingsKey}_aggregations"
+
+    val smoothingSeconds: StateFlow<Int> = field.smoothing?.let { options ->
+        prefs.stateFlowOf(smoothingKey, scope) { getInt(smoothingKey, options.defaultSeconds) }
+    } ?: MutableStateFlow(0)
+
+    val zoneColors: StateFlow<Boolean> = prefs.stateFlowOf(zoneColorsKey, scope) {
+        getBoolean(zoneColorsKey, DEFAULT_ZONE_COLORS)
     }
 
-    val heartRateZoneColors: StateFlow<Boolean> = prefs.stateFlowOf(KEY_HEART_RATE_ZONE_COLORS, scope) {
-        getBoolean(KEY_HEART_RATE_ZONE_COLORS, DEFAULT_ZONE_COLORS)
+    val aggregations: StateFlow<Set<Aggregation>> = prefs.stateFlowOf(aggregationsKey, scope) {
+        getStringSet(aggregationsKey, null)
+            ?.mapNotNullTo(mutableSetOf()) { stored -> Aggregation.entries.find { it.name == stored } }
+            ?: DEFAULT_AGGREGATIONS
     }
 
-    val powerAggregations: StateFlow<Set<Aggregation>> = prefs.stateFlowOf(KEY_POWER_AGGREGATIONS, scope) {
-        getAggregations(KEY_POWER_AGGREGATIONS)
-    }
+    fun setSmoothingSeconds(seconds: Int) = prefs.edit { putInt(smoothingKey, seconds) }
 
-    val heartRateAggregations: StateFlow<Set<Aggregation>> =
-        prefs.stateFlowOf(KEY_HEART_RATE_AGGREGATIONS, scope) { getAggregations(KEY_HEART_RATE_AGGREGATIONS) }
+    fun setZoneColors(enabled: Boolean) = prefs.edit { putBoolean(zoneColorsKey, enabled) }
 
-    fun setPowerSmoothingSeconds(seconds: Int) = prefs.edit { putInt(KEY_POWER_SMOOTHING_SECONDS, seconds) }
+    fun setAggregations(aggregations: Set<Aggregation>) =
+        prefs.edit { putStringSet(aggregationsKey, aggregations.mapTo(mutableSetOf()) { it.name }) }
 
-    fun setPowerZoneColors(enabled: Boolean) = prefs.edit { putBoolean(KEY_POWER_ZONE_COLORS, enabled) }
-
-    fun setHeartRateZoneColors(enabled: Boolean) = prefs.edit { putBoolean(KEY_HEART_RATE_ZONE_COLORS, enabled) }
-
-    fun setPowerAggregations(aggregations: Set<Aggregation>) =
-        prefs.putAggregations(KEY_POWER_AGGREGATIONS, aggregations)
-
-    fun setHeartRateAggregations(aggregations: Set<Aggregation>) =
-        prefs.putAggregations(KEY_HEART_RATE_AGGREGATIONS, aggregations)
-
-    companion object {
-        private const val PREFS_NAME = "powergraph_settings"
-        private const val KEY_POWER_SMOOTHING_SECONDS = "power_smoothing_seconds"
-        private const val KEY_POWER_ZONE_COLORS = "power_zone_colors"
-        private const val KEY_HEART_RATE_ZONE_COLORS = "heart_rate_zone_colors"
-        private const val KEY_POWER_AGGREGATIONS = "power_aggregations"
-        private const val KEY_HEART_RATE_AGGREGATIONS = "heart_rate_aggregations"
-
-        const val DEFAULT_POWER_SMOOTHING_SECONDS = 3
+    private companion object {
         const val DEFAULT_ZONE_COLORS = true
         val DEFAULT_AGGREGATIONS = setOf(Aggregation.MAX)
     }
@@ -91,11 +99,3 @@ private fun <T> SharedPreferences.changesOf(key: String, read: SharedPreferences
     send(read())
     awaitClose { unregisterOnSharedPreferenceChangeListener(listener) }
 }
-
-private fun SharedPreferences.getAggregations(key: String): Set<Aggregation> =
-    getStringSet(key, null)
-        ?.mapNotNullTo(mutableSetOf()) { stored -> Aggregation.entries.find { it.name == stored } }
-        ?: PowerGraphSettings.DEFAULT_AGGREGATIONS
-
-private fun SharedPreferences.putAggregations(key: String, aggregations: Set<Aggregation>) =
-    edit { putStringSet(key, aggregations.mapTo(mutableSetOf()) { it.name }) }

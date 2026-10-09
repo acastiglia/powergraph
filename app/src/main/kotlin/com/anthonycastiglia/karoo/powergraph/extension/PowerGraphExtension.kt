@@ -1,14 +1,11 @@
 package com.anthonycastiglia.karoo.powergraph.extension
 
-import com.anthonycastiglia.karoo.powergraph.data.Aggregation
+import com.anthonycastiglia.karoo.powergraph.data.GRAPH_FIELDS
+import com.anthonycastiglia.karoo.powergraph.data.GraphField
 import com.anthonycastiglia.karoo.powergraph.data.PowerGraphSettings
-import com.anthonycastiglia.karoo.powergraph.data.randomDoubles
-import com.anthonycastiglia.karoo.powergraph.data.randomWalk
-import com.anthonycastiglia.karoo.powergraph.datatype.GraphScale
 import com.anthonycastiglia.karoo.powergraph.datatype.ScrollingGraphDataType
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.KarooExtension
-import io.hammerhead.karooext.models.DataType
 import io.hammerhead.karooext.models.UserProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,38 +18,24 @@ class PowerGraphExtension : KarooExtension("powergraph", "1.0") {
     private val settingsScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val settings by lazy { PowerGraphSettings(this, settingsScope) }
 
-    override val types by lazy {
-        listOf(
-            ScrollingGraphDataType(
-                extension = extension,
-                typeId = "power-graph",
-                dataSource = karooSystem.streamDataFlow(DataType.Type.POWER),
-                previewSource = randomDoubles(min = 0.0, max = 300.0),
-                scale = GraphScale(floor = 0.0, minSpan = 200.0),
-                aggregationSources = mapOf(
-                    Aggregation.MAX to karooSystem.streamDataFlow(DataType.Type.MAX_POWER),
-                    Aggregation.AVERAGE to karooSystem.streamDataFlow(DataType.Type.AVERAGE_POWER),
-                    Aggregation.NORMALIZED to karooSystem.streamDataFlow(DataType.Type.NORMALIZED_POWER),
-                ),
-                aggregations = settings.powerAggregations,
-                zonesSource = karooSystem.consumerFlow<UserProfile>().map { it.powerZones },
-                zoneColorsEnabled = settings.powerZoneColors,
-                currentValueSmoothingSeconds = settings.powerSmoothingSeconds,
-            ),
-            ScrollingGraphDataType(
-                extension = extension,
-                typeId = "heart-rate-graph",
-                dataSource = karooSystem.streamDataFlow(DataType.Type.HEART_RATE),
-                previewSource = randomWalk(start = 120.0, min = 45.0, max = 190.0, maxStepSize = 2.0),
-                scale = GraphScale(floor = 40.0, minSpan = 60.0),
-                aggregationSources = mapOf(
-                    Aggregation.MAX to karooSystem.streamDataFlow(DataType.Type.MAX_HR),
-                    Aggregation.AVERAGE to karooSystem.streamDataFlow(DataType.Type.AVERAGE_HR),
-                ),
-                aggregations = settings.heartRateAggregations,
-                zonesSource = karooSystem.consumerFlow<UserProfile>().map { it.heartRateZones },
-                zoneColorsEnabled = settings.heartRateZoneColors,
-            )
+    override val types by lazy { GRAPH_FIELDS.map(::dataTypeFor) }
+
+    /** [field]'s data type, with its Karoo stream ids opened as flows and its settings wired in. */
+    private fun dataTypeFor(field: GraphField): ScrollingGraphDataType {
+        val fieldSettings = settings.forField(field)
+        return ScrollingGraphDataType(
+            extension = extension,
+            typeId = field.typeId,
+            dataSource = karooSystem.streamDataFlow(field.dataType),
+            previewSource = field.previewSource,
+            scale = field.scale,
+            aggregationSources = field.aggregationDataTypes.mapValues { (_, dataType) ->
+                karooSystem.streamDataFlow(dataType)
+            },
+            aggregations = fieldSettings.aggregations,
+            zonesSource = field.zones?.let { zones -> karooSystem.consumerFlow<UserProfile>().map { zones(it) } },
+            zoneColorsEnabled = fieldSettings.zoneColors,
+            currentValueSmoothingSeconds = fieldSettings.smoothingSeconds,
         )
     }
 
