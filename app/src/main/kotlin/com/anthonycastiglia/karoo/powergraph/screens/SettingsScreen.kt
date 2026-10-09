@@ -36,11 +36,7 @@ import com.anthonycastiglia.karoo.powergraph.theme.AppTheme
 
 private val POWER_SMOOTHING_SECONDS = listOf(1, 3, 10, 30)
 
-<<<<<<< Updated upstream
-private val AGGREGATION_LABELS = mapOf(
-=======
 private val AGGREGATION_SETTING_LABEL_IDS = mapOf(
->>>>>>> Stashed changes
     Aggregation.MAX to R.string.aggregation_max,
     Aggregation.AVERAGE to R.string.aggregation_average,
     Aggregation.NORMALIZED to R.string.aggregation_normalized,
@@ -107,20 +103,12 @@ fun SettingsScreen() {
             SwitchRow(
                 label = stringResource(R.string.field_power),
                 checked = powerZoneColors,
-<<<<<<< Updated upstream
-                onCheckedChange = { settings.setPowerZoneColors(it) },
-=======
                 onCheckedChange = settings::setPowerZoneColors,
->>>>>>> Stashed changes
             )
             SwitchRow(
                 label = stringResource(R.string.field_heart_rate),
                 checked = heartRateZoneColors,
-<<<<<<< Updated upstream
-                onCheckedChange = { settings.setHeartRateZoneColors(it) },
-=======
                 onCheckedChange = settings::setHeartRateZoneColors,
->>>>>>> Stashed changes
             )
         }
     }
@@ -141,11 +129,7 @@ private fun AggregationChoices(
     )
     options.forEach { aggregation ->
         CheckRow(
-<<<<<<< Updated upstream
-            label = stringResource(AGGREGATION_LABELS.getValue(aggregation)),
-=======
             label = stringResource(AGGREGATION_SETTING_LABEL_IDS.getValue(aggregation)),
->>>>>>> Stashed changes
             checked = aggregation in selected,
             onCheckedChange = { checked -> onChange(if (checked) selected + aggregation else selected - aggregation) },
         )
