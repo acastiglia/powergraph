@@ -31,10 +31,11 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.anthonycastiglia.karoo.powergraph.R
 import com.anthonycastiglia.karoo.powergraph.data.Aggregation
+import com.anthonycastiglia.karoo.powergraph.data.FieldSettings
+import com.anthonycastiglia.karoo.powergraph.data.GRAPH_FIELDS
+import com.anthonycastiglia.karoo.powergraph.data.GraphField
 import com.anthonycastiglia.karoo.powergraph.data.PowerGraphSettings
 import com.anthonycastiglia.karoo.powergraph.theme.AppTheme
-
-private val POWER_SMOOTHING_SECONDS = listOf(1, 3, 10, 30)
 
 private val AGGREGATION_SETTING_LABEL_IDS = mapOf(
     Aggregation.MAX to R.string.aggregation_max,
@@ -43,19 +44,15 @@ private val AGGREGATION_SETTING_LABEL_IDS = mapOf(
 )
 
 /**
- * Settings for the data fields, read from and written straight through to [PowerGraphSettings]:
- * there's no separate screen-local state to keep in sync, and nothing to lose on rotation.
+ * Settings for the data fields, one section per [GRAPH_FIELDS] entry, read from and written
+ * straight through to [PowerGraphSettings]: there's no separate screen-local state to keep in
+ * sync, and nothing to lose on rotation.
  */
 @Composable
 fun SettingsScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val settings = remember { PowerGraphSettings(context, scope) }
-    val powerSmoothingSeconds by settings.powerSmoothingSeconds.collectAsState()
-    val powerAggregations by settings.powerAggregations.collectAsState()
-    val heartRateAggregations by settings.heartRateAggregations.collectAsState()
-    val powerZoneColors by settings.powerZoneColors.collectAsState()
-    val heartRateZoneColors by settings.heartRateZoneColors.collectAsState()
 
     Column(
         modifier = Modifier
@@ -63,76 +60,75 @@ fun SettingsScreen() {
             .background(MaterialTheme.colorScheme.background)
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(24.dp),
+        verticalArrangement = Arrangement.spacedBy(32.dp),
     ) {
-        SettingsSection(
-            title = R.string.setting_power_smoothing,
-            description = R.string.setting_power_smoothing_description,
-        ) {
-            POWER_SMOOTHING_SECONDS.forEach { seconds ->
-                ChoiceRow(
-                    label = stringResource(R.string.seconds_format, seconds),
-                    selected = seconds == powerSmoothingSeconds,
-                    onSelect = { settings.setPowerSmoothingSeconds(seconds) },
-                )
-            }
-        }
-
-        SettingsSection(
-            title = R.string.setting_aggregations,
-            description = R.string.setting_aggregations_description,
-        ) {
-            AggregationChoices(
-                fieldLabel = R.string.field_power,
-                options = Aggregation.entries,
-                selected = powerAggregations,
-                onChange = settings::setPowerAggregations,
-            )
-            AggregationChoices(
-                fieldLabel = R.string.field_heart_rate,
-                options = Aggregation.entries - Aggregation.NORMALIZED,
-                selected = heartRateAggregations,
-                onChange = settings::setHeartRateAggregations,
-            )
-        }
-
-        SettingsSection(
-            title = R.string.setting_zone_colors,
-            description = R.string.setting_zone_colors_description,
-        ) {
-            SwitchRow(
-                label = stringResource(R.string.field_power),
-                checked = powerZoneColors,
-                onCheckedChange = settings::setPowerZoneColors,
-            )
-            SwitchRow(
-                label = stringResource(R.string.field_heart_rate),
-                checked = heartRateZoneColors,
-                onCheckedChange = settings::setHeartRateZoneColors,
-            )
-        }
+        GRAPH_FIELDS.forEach { field -> FieldSection(field, settings.forField(field)) }
     }
 }
 
-/** A field's labeled group of checkboxes for the [options] it has, reporting the new set to [onChange]. */
+/**
+ * [field]'s settings under its name: each setting appears only where the field has it --
+ * smoothing with [GraphField.smoothing], aggregations with [GraphField.aggregationDataTypes],
+ * zone colors with [GraphField.zones]. Aggregations are listed in [Aggregation] order, the order
+ * the field stacks them in.
+ */
 @Composable
-private fun AggregationChoices(
-    @StringRes fieldLabel: Int,
-    options: List<Aggregation>,
-    selected: Set<Aggregation>,
-    onChange: (Set<Aggregation>) -> Unit,
-) {
-    Text(
-        text = stringResource(fieldLabel),
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.onBackground,
-    )
-    options.forEach { aggregation ->
-        CheckRow(
-            label = stringResource(AGGREGATION_SETTING_LABEL_IDS.getValue(aggregation)),
-            checked = aggregation in selected,
-            onCheckedChange = { checked -> onChange(if (checked) selected + aggregation else selected - aggregation) },
+private fun FieldSection(field: GraphField, settings: FieldSettings) {
+    val smoothingSeconds by settings.smoothingSeconds.collectAsState()
+    val aggregations by settings.aggregations.collectAsState()
+    val zoneColors by settings.zoneColors.collectAsState()
+
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Text(
+            text = stringResource(field.label),
+            style = MaterialTheme.typography.titleLarge,
+            color = MaterialTheme.colorScheme.onBackground,
         )
+
+        field.smoothing?.let { smoothing ->
+            SettingsSection(
+                title = R.string.setting_smoothing,
+                description = R.string.setting_smoothing_description,
+            ) {
+                smoothing.seconds.forEach { seconds ->
+                    ChoiceRow(
+                        label = stringResource(R.string.seconds_format, seconds),
+                        selected = seconds == smoothingSeconds,
+                        onSelect = { settings.setSmoothingSeconds(seconds) },
+                    )
+                }
+            }
+        }
+
+        if (field.aggregationDataTypes.isNotEmpty()) {
+            SettingsSection(
+                title = R.string.setting_aggregations,
+                description = R.string.setting_aggregations_description,
+            ) {
+                Aggregation.entries.filter { it in field.aggregationDataTypes }.forEach { aggregation ->
+                    CheckRow(
+                        label = stringResource(AGGREGATION_SETTING_LABEL_IDS.getValue(aggregation)),
+                        checked = aggregation in aggregations,
+                        onCheckedChange = { checked ->
+                            settings.setAggregations(if (checked) aggregations + aggregation else aggregations - aggregation)
+                        },
+                    )
+                }
+            }
+        }
+
+        if (field.zones != null) {
+            SettingsSection(
+                title = R.string.setting_zone_colors,
+                description = R.string.setting_zone_colors_description,
+            ) {
+                SwitchRow(
+                    label = stringResource(R.string.zone_colors_enabled),
+                    checked = zoneColors,
+                    onCheckedChange = settings::setZoneColors,
+                )
+            }
+        }
     }
 }
 

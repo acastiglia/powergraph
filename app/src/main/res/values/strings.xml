@@ -6,16 +6,17 @@
     <string name="datatype_heart_rate_graph">HR</string>
     <string name="datatype_heart_rate_graph_desc">Rolling graph of current heart rate</string>
 
-    <string name="setting_power_smoothing">Power Smoothing</string>
-    <string name="setting_power_smoothing_description">Averages the current power value shown in the field. The graph still plots each reading.</string>
+    <string name="setting_smoothing">Smoothing</string>
+    <string name="setting_smoothing_description">Averages the current value shown in the field. The graph still plots each reading.</string>
     <string name="seconds_format">%ds</string>
-    <string name="setting_aggregations_description">Statistics shown alongside the current value in the full-size layout. Set separately for each field.</string>
+    <string name="setting_aggregations_description">Statistics shown alongside the current value in the full-size layout.</string>
     <string name="setting_aggregations">Aggregations</string>
     <string name="aggregation_max">Max</string>
     <string name="aggregation_average">Average</string>
     <string name="aggregation_normalized">Normalized</string>
     <string name="setting_zone_colors">Zone Colors</string>
-    <string name="setting_zone_colors_description">When enabled, graph samples are colored by training zone. Set separately for each field.</string>
+    <string name="setting_zone_colors_description">When enabled, graph samples are colored by training zone.</string>
     <string name="field_power">Power</string>
     <string name="field_heart_rate">Heart Rate</string>
+    <string name="zone_colors_enabled">Enabled</string>
 </resources>

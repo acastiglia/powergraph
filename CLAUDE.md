@@ -8,9 +8,10 @@ Karoo has no built-in scrolling graph field for power or heart rate; this extens
 
 ## Structure
 
-- `app/src/main/kotlin/.../SettingsActivity.kt`, `screens/SettingsScreen.kt` — settings screen for the data fields, opened from the Karoo's app drawer (it's the launcher activity). Reads and writes straight through to `PowerGraphSettings`. See `docs/projects/settings-activity.md`.
-- `app/src/main/kotlin/.../data/PowerGraphSettings.kt` — `SharedPreferences`-backed settings store; each setting is exposed as a `Flow` so a change applies live to a running field.
-- `app/src/main/kotlin/.../extension/PowerGraphExtension.kt` — registers the extension, wires up the two data types, and wires `PowerGraphSettings` into them.
+- `app/src/main/kotlin/.../SettingsActivity.kt`, `screens/SettingsScreen.kt` — settings screen for the data fields, opened from the Karoo's app drawer (it's the launcher activity). One section per `GRAPH_FIELDS` entry, reading and writing straight through to `PowerGraphSettings`. See `docs/projects/settings-activity.md`.
+- `app/src/main/kotlin/.../data/GraphField.kt` — `GRAPH_FIELDS`: one `GraphField` per data field, holding everything that differs between fields (Karoo stream ids, zones, aggregations, smoothing options, labels). The extension and the settings screen both build from this list. Adding a field also needs an entry in `extension_info.xml`.
+- `app/src/main/kotlin/.../data/PowerGraphSettings.kt` — `SharedPreferences`-backed settings store; `forField(field)` gives each field's settings as `StateFlow`s so a change applies live to a running field.
+- `app/src/main/kotlin/.../extension/PowerGraphExtension.kt` — registers the extension, maps `GRAPH_FIELDS` to data types and wires each field's settings into its data type.
 - `app/src/main/kotlin/.../extension/Extensions.kt` — `KarooSystemService` → `Flow` adapters.
 - `app/src/main/kotlin/.../datatype/ScrollingGraphDataType.kt` — the core implementation: renders the scrolling bar graph as a bitmap inside `RemoteViews`, with full and compact layouts chosen by tile size.
 - `app/src/main/kotlin/.../data/BufferedDataStream.kt` — buffers samples into the rolling 2-minute window the graph draws from. Not yet settings-driven; see the open questions in `docs/projects/settings-activity.md`.
