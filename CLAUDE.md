@@ -8,11 +8,12 @@ Karoo has no built-in scrolling graph field for power or heart rate; this extens
 
 ## Structure
 
-- `app/src/main/kotlin/.../MainActivity.kt`, `screens/MainScreen.kt` — still the unmodified template placeholder screen. All real product work so far is in the data-type/extension layer below, not this app screen.
-- `app/src/main/kotlin/.../extension/PowerGraphExtension.kt` — registers the extension and wires up the two data types.
+- `app/src/main/kotlin/.../SettingsActivity.kt`, `screens/SettingsScreen.kt` — settings screen for the data fields, opened from the Karoo's app drawer (it's the launcher activity). Reads and writes straight through to `PowerGraphSettings`. See `docs/projects/settings-activity.md`.
+- `app/src/main/kotlin/.../data/PowerGraphSettings.kt` — `SharedPreferences`-backed settings store; each setting is exposed as a `Flow` so a change applies live to a running field.
+- `app/src/main/kotlin/.../extension/PowerGraphExtension.kt` — registers the extension, wires up the two data types, and wires `PowerGraphSettings` into them.
 - `app/src/main/kotlin/.../extension/Extensions.kt` — `KarooSystemService` → `Flow` adapters.
 - `app/src/main/kotlin/.../datatype/ScrollingGraphDataType.kt` — the core implementation: renders the scrolling bar graph as a bitmap inside `RemoteViews`, with full and compact layouts chosen by tile size.
-- `app/src/main/kotlin/.../data/BufferedDataStream.kt` — buffers samples into the rolling 2-minute window the graph draws from.
+- `app/src/main/kotlin/.../data/BufferedDataStream.kt` — buffers samples into the rolling 2-minute window the graph draws from. Not yet settings-driven; see the open questions in `docs/projects/settings-activity.md`.
 - `app/src/main/res/xml/extension_info.xml` — declares the two data types to Karoo.
 
 ## Known rough edges

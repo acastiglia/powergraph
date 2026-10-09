@@ -1,20 +1,42 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-    Full layout: the current value, and the ride's max where the metric has one, in a row above
-    the graph. Both are real TextViews so Karoo lays them out at an exact size, the same way its
-    own numeric fields do; drawn into the bitmap instead, they were scaled along with it to fit a
-    tile whose real height isn't knowable from ViewConfig, and rendered at different sizes from
-    row to row.
+    Full layout: the current value, and the selected ride aggregations (max, average, normalized)
+    where the metric has them, in a row above the graph. Both are real TextViews so Karoo lays
+    them out at an exact size, the same way its own numeric fields do; drawn into the bitmap
+    instead, they were scaled along with it to fit a tile whose real height isn't knowable from
+    ViewConfig, and rendered at different sizes from row to row.
 
     "monospace" resolves to Relative12-Regular.otf, the face Karoo's own numeric fields use.
 
     The graph takes the height the text row leaves, rather than the drawing working out where the
     text ended and starting the bars below it. The current value is end-aligned in whatever the
+<<<<<<< Updated upstream
+=======
+<<<<<<< Updated upstream
     max leaves of the row, the same side as in the compact layout, so its right edge stays put
     as its digit count changes. The max sits against the tile's left edge, in a slot whose width
     is set from code, just wide enough for its widest text. It is hidden as invisible, never
     gone, so it keeps its slot and the value stays put whether or not there is a max to show.
     Reversing the sides for left-justified text is left for later.
+=======
+>>>>>>> Stashed changes
+    aggregations leave of the row, the same side as in the compact layout, so its right edge stays
+    put as its digit count changes. The aggregations are a two-column table, each column one
+    TextView with a line per aggregation: labels justified left, numbers justified right, so
+    the numbers line up whatever the labels' widths. Both are sized from code so the stacked
+    digits span exactly the height of the value's, and bottom-aligned with it rather than
+    baseline-aligned, which would hang every line after the first below the value. The bottom
+    padding, also set from code, puts the last line on the value's baseline. The table sits
+    against the tile's left edge, each column in a slot whose width is set from code, just
+    wide enough for its widest text. Both are hidden as invisible, never gone, so the slots are
+<<<<<<< Updated upstream
+    kept and the value stays put whether or not there is a stat to show. Reversing the sides
+    for left-justified text is left for later.
+=======
+    kept and the value stays put while the stats are pending. With no aggregation selected the
+    slots are zero-width. Reversing the sides for left-justified text is left for later.
+>>>>>>> Stashed changes
+>>>>>>> Stashed changes
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -24,18 +46,53 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:baselineAligned="true"
+        android:baselineAligned="false"
         android:orientation="horizontal"
         android:paddingTop="2dp">
 
         <TextView
+<<<<<<< Updated upstream
+            android:id="@+id/aggregation_labels"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:fontFamily="monospace"
+            android:gravity="start"
+            android:includeFontPadding="false"
+            android:maxLines="3"
+            android:paddingEnd="0dp"
+            android:paddingStart="4dp"
+            android:textColor="@android:color/black" />
+
+        <TextView
+            android:id="@+id/aggregation_stats"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="bottom"
+            android:fontFamily="monospace"
+            android:gravity="end"
+            android:includeFontPadding="false"
+            android:maxLines="3"
+            android:paddingEnd="0dp"
+            android:paddingStart="4dp"
+            android:textColor="@android:color/black" />
+
+        <TextView
+            android:id="@+id/value"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+=======
             android:id="@+id/max_value"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+>>>>>>> Stashed changes
             android:fontFamily="monospace"
             android:gravity="start"
             android:includeFontPadding="false"
             android:maxLines="1"
+<<<<<<< Updated upstream
+=======
             android:paddingEnd="0dp"
             android:paddingStart="4dp"
             android:textColor="@android:color/black" />
@@ -49,6 +106,7 @@
             android:gravity="end"
             android:includeFontPadding="false"
             android:maxLines="1"
+>>>>>>> Stashed changes
             android:paddingEnd="4dp"
             android:paddingStart="0dp"
             android:textColor="@android:color/black" />
