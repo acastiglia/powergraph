@@ -6,11 +6,13 @@ import com.anthonycastiglia.karoo.powergraph.data.PowerGraphSettings
 import com.anthonycastiglia.karoo.powergraph.datatype.ScrollingGraphDataType
 import io.hammerhead.karooext.KarooSystemService
 import io.hammerhead.karooext.extension.KarooExtension
+import io.hammerhead.karooext.models.StreamState
 import io.hammerhead.karooext.models.UserProfile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 class PowerGraphExtension : KarooExtension("powergraph", "1.0") {
@@ -20,18 +22,24 @@ class PowerGraphExtension : KarooExtension("powergraph", "1.0") {
 
     override val types by lazy { GRAPH_FIELDS.map(::dataTypeFor) }
 
-    /** [field]'s data type, with its Karoo stream ids opened as flows and its settings wired in. */
+    /**
+     * [field]'s data type, with its Karoo stream ids opened as flows, converted to the displayed
+     * units where [GraphField.displayFactor] says so, and its settings wired in.
+     */
     private fun dataTypeFor(field: GraphField): ScrollingGraphDataType {
         val fieldSettings = settings.forField(field)
+        fun displayStream(dataType: String): Flow<StreamState> {
+            val stream = karooSystem.streamDataFlow(dataType)
+            val displayFactor = field.displayFactor ?: return stream
+            return stream.scaledBy(karooSystem.consumerFlow<UserProfile>().map { displayFactor(it) })
+        }
         return ScrollingGraphDataType(
             extension = extension,
             typeId = field.typeId,
-            dataSource = karooSystem.streamDataFlow(field.dataType),
+            dataSource = displayStream(field.dataType),
             previewSource = field.previewSource,
             scale = field.scale,
-            aggregationSources = field.aggregationDataTypes.mapValues { (_, dataType) ->
-                karooSystem.streamDataFlow(dataType)
-            },
+            aggregationSources = field.aggregationDataTypes.mapValues { (_, dataType) -> displayStream(dataType) },
             aggregations = fieldSettings.aggregations,
             zonesSource = field.zones?.let { zones -> karooSystem.consumerFlow<UserProfile>().map { zones(it) } },
             zoneColorsEnabled = fieldSettings.zoneColors,

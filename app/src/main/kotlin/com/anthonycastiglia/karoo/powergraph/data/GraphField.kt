@@ -1,8 +1,10 @@
 package com.anthonycastiglia.karoo.powergraph.data
 
 import androidx.annotation.StringRes
+import com.anthonycastiglia.karoo.powergraph.R.string.field_cadence
 import com.anthonycastiglia.karoo.powergraph.R.string.field_heart_rate
 import com.anthonycastiglia.karoo.powergraph.R.string.field_power
+import com.anthonycastiglia.karoo.powergraph.R.string.field_speed
 import com.anthonycastiglia.karoo.powergraph.datatype.GraphScale
 import io.hammerhead.karooext.models.DataType
 import io.hammerhead.karooext.models.UserProfile
@@ -19,7 +21,9 @@ import kotlinx.coroutines.flow.Flow
  * field's preference keys. [aggregationDataTypes] holds a ride-wide stat stream for each
  * [Aggregation] the metric has, and only those are offered or shown. [zones] picks the field's
  * zones from the rider's profile, null for a metric without zones. [smoothing] is null for a
- * field whose current value is never smoothed.
+ * field whose current value is never smoothed. [displayFactor] converts the field's values from
+ * the units Karoo streams them in to the ones the rider sees, chosen from their profile; null
+ * for a metric shown as streamed. [scale] and [previewSource] are in the displayed units.
  */
 class GraphField(
     val typeId: String,
@@ -27,8 +31,9 @@ class GraphField(
     @StringRes val label: Int,
     val dataType: String,
     val aggregationDataTypes: Map<Aggregation, String>,
-    val zones: ((UserProfile) -> List<UserProfile.Zone>)?,
-    val smoothing: SmoothingOptions?,
+    val zones: ((UserProfile) -> List<UserProfile.Zone>)? = null,
+    val smoothing: SmoothingOptions? = null,
+    val displayFactor: ((UserProfile) -> Double)? = null,
     val scale: GraphScale,
     val previewSource: Flow<Double>,
 )
@@ -66,5 +71,42 @@ val GRAPH_FIELDS = listOf(
         smoothing = null,
         scale = GraphScale(floor = 40.0, minSpan = 60.0),
         previewSource = randomWalk(start = 120.0, min = 45.0, max = 190.0, maxStepSize = 2.0),
-    )
+    ),
+    GraphField(
+        typeId = "cadence-graph",
+        settingsKey = "cadence",
+        label = field_cadence,
+        dataType = DataType.Type.CADENCE,
+        aggregationDataTypes = mapOf(
+            Aggregation.MAX to DataType.Type.MAX_CADENCE,
+            Aggregation.AVERAGE to DataType.Type.AVERAGE_CADENCE,
+        ),
+        smoothing = SmoothingOptions(seconds = listOf(1, 3, 10, 30), defaultSeconds = 1),
+        scale = GraphScale(floor = 0.0, minSpan = 60.0),
+        previewSource = randomDoubles(min = 0.0, max = 120.0),
+    ),
+    GraphField(
+        typeId = "speed-graph",
+        settingsKey = "speed",
+        label = field_speed,
+        dataType = DataType.Type.SPEED,
+        aggregationDataTypes = mapOf(
+            Aggregation.MAX to DataType.Type.MAX_SPEED,
+            Aggregation.AVERAGE to DataType.Type.AVERAGE_SPEED,
+        ),
+        displayFactor = ::speedDisplayFactor,
+        scale = GraphScale(floor = 0.0, minSpan = 20.0),
+        previewSource = randomWalk(start = 25.0, min = 10.0, max = 45.0, maxStepSize = 1.5),
+    ),
 )
+
+
+private const val METERS_PER_SECOND_TO_KMH = 3.6
+private const val METERS_PER_SECOND_TO_MPH = 2.236936
+
+/** Karoo streams speed in m/s; riders see km/h or mph, per their profile's distance unit. */
+private fun speedDisplayFactor(profile: UserProfile): Double =
+    when (profile.preferredUnit.distance) {
+        UserProfile.PreferredUnit.UnitType.IMPERIAL -> METERS_PER_SECOND_TO_MPH
+        else -> METERS_PER_SECOND_TO_KMH
+    }

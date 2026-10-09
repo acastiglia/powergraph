@@ -16,4 +16,16 @@
         description="@string/datatype_heart_rate_graph_desc"
         graphical="true"
         icon="@drawable/chart" />
+    <DataType
+        typeId="cadence-graph"
+        displayName="@string/datatype_cadence_graph"
+        description="@string/datatype_cadence_graph_desc"
+        graphical="true"
+        icon="@drawable/chart" />
+    <DataType
+        typeId="speed-graph"
+        displayName="@string/datatype_speed_graph"
+        description="@string/datatype_speed_graph_desc"
+        graphical="true"
+        icon="@drawable/chart" />
 </ExtensionInfo>
