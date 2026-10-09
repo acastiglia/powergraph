@@ -134,7 +134,9 @@ class ScrollingGraphDataType(
         val compactLayout = compactLayoutFor(context, config)
         val graphSize = graphBitmapSize(config, compactLayout)
         val plot = plotFor(graphSize, compactLayout, context.resources.displayMetrics.density)
-        val fullValueSizeSp by lazy { fullValueTextSizeSp(context, config.textSize, config.viewSize.first) }
+        val fullSizing by lazy {
+            fullTextSizing(context, config.textSize, config.viewSize.first, config.viewSize.second)
+        }
         val activeBuffer = bufferFor(config, viewScope)
         val maxValue = maxValueFor(config, viewScope)
 
@@ -149,7 +151,7 @@ class ScrollingGraphDataType(
                     val graph = drawGraph(points, graphSize, plot)
                     emitter.updateView(
                         if (compactLayout == null) {
-                            fullLayoutViews(context, graph, currentValue, maxValue.value, fullValueSizeSp)
+                            fullLayoutViews(context, graph, currentValue, maxValue.value, fullSizing)
                         } else {
                             compactLayoutViews(context, graph, currentValue, compactLayout)
                         },
@@ -280,24 +282,25 @@ class ScrollingGraphDataType(
     }
 
     /**
-     * The full layout: the current value, and [maxValue] where there is one, in a row above the
-     * graph. The max label only takes space while there's a max to show, giving up its half of
-     * the row to the value otherwise.
+     * The full layout: the current value on the right, as in the compact layout, and [maxValue]
+     * on the left where there is one, in a row above the graph. The max label is hidden while
+     * there's no max, but keeps its slot so the value never moves.
      */
     private fun fullLayoutViews(
         context: Context,
         graph: Bitmap,
         currentValue: Double,
         maxValue: Double?,
-        valueSizeSp: Float,
+        sizing: FullTextSizing,
     ): RemoteViews = RemoteViews(context.packageName, view_scrolling_graph).apply {
         setImageViewBitmap(graph_image, graph)
         setTextViewText(value, formatValue(currentValue))
-        setTextViewTextSize(value, TypedValue.COMPLEX_UNIT_SP, valueSizeSp)
-        setViewVisibility(max_value, if (maxValue == null) View.GONE else View.VISIBLE)
+        setTextViewTextSize(value, TypedValue.COMPLEX_UNIT_SP, sizing.valueSizeSp)
+        setInt(max_value, "setWidth", sizing.maxSlotWidthPx)
+        setViewVisibility(max_value, if (maxValue == null) View.INVISIBLE else View.VISIBLE)
         maxValue?.let {
             setTextViewText(max_value, "MAX ${formatValue(it)}")
-            setTextViewTextSize(max_value, TypedValue.COMPLEX_UNIT_SP, valueSizeSp * MAX_TEXT_SIZE_FRACTION)
+            setTextViewTextSize(max_value, TypedValue.COMPLEX_UNIT_SP, sizing.valueSizeSp * MAX_TEXT_SIZE_FRACTION)
         }
     }
 
@@ -407,15 +410,24 @@ class ScrollingGraphDataType(
 
     /**
      * Text size in sp for the full layout's value row, at [MAX_TEXT_SIZE_FRACTION] of it for the
-     * max label beside it.
+     * max label beside it, and the width of the max label's slot.
      *
-     * Taken from Karoo's [ViewConfig.textSize] scaled by [VALUE_FULL_SIZE_FRACTION], rather than
-     * from the tile's height, which varies by a pixel or two between fields of the same gridSize.
-     * Shrunk further if the widest values the metric could show wouldn't fit side by side.
+     * Taken from Karoo's [ViewConfig.textSize] scaled by [VALUE_FULL_SIZE_FRACTION]. Karoo sizes
+     * that by the tile's width, so it's scaled up further, to at most [MAX_VALUE_HEIGHT_SCALE],
+     * as the content below the header grows taller than [REFERENCE_CONTENT_HEIGHT_PX]. Taller
+     * tiles have room for it; the nominal height varies by a pixel or two between fields of the
+     * same gridSize, which this accepts as negligible at this scale.
+     *
+     * Shrunk further if the widest value and max label wouldn't fit side by side. The max
+     * label gets a slot just wide enough for its widest text, and the value the rest of the
+     * row. The slot is kept even for metrics without a max, or before there is one, so the
+     * value never moves.
      */
-    private fun fullValueTextSizeSp(context: Context, textSize: Int, viewWidth: Int): Float {
+    private fun fullTextSizing(context: Context, textSize: Int, viewWidth: Int, viewHeight: Int): FullTextSizing {
         val metrics = context.resources.displayMetrics
-        val valueSp = textSize * VALUE_FULL_SIZE_FRACTION
+        val heightScale = ((viewHeight - HEADER_HEIGHT_PX) / REFERENCE_CONTENT_HEIGHT_PX)
+            .coerceIn(1f, MAX_VALUE_HEIGHT_SCALE)
+        val valueSp = textSize * VALUE_FULL_SIZE_FRACTION * heightScale
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = VALUE_TYPEFACE }
 
         fun widthAt(text: String, sp: Float): Float {
@@ -424,14 +436,17 @@ class ScrollingGraphDataType(
         }
 
         val valueWidth = widthAt("$CURRENT_VALUE_DIGIT_TEMPLATE$unitLabel", valueSp)
-        val maxWidth = if (maxValueSource != null) {
-            widthAt("MAX $CURRENT_VALUE_DIGIT_TEMPLATE$unitLabel", valueSp * MAX_TEXT_SIZE_FRACTION)
-        } else {
-            0f
-        }
+        val maxWidth = widthAt("MAX $CURRENT_VALUE_DIGIT_TEMPLATE$unitLabel", valueSp * MAX_TEXT_SIZE_FRACTION)
+        val edgePaddingPx = (VALUE_EDGE_PADDING_DP * metrics.density).roundToInt()
+        val availableWidth = viewWidth - 2 * edgePaddingPx - 1
         val worstCaseWidth = valueWidth + maxWidth
-        return if (worstCaseWidth > viewWidth) valueSp * viewWidth / worstCaseWidth else valueSp
+        val shrink = if (worstCaseWidth > availableWidth) availableWidth / worstCaseWidth else 1f
+        val maxTextWidth = ceil(maxWidth * shrink).toInt()
+        return FullTextSizing(valueSizeSp = valueSp * shrink, maxSlotWidthPx = maxTextWidth + edgePaddingPx)
     }
+
+    /** [maxSlotWidthPx] includes the max label's edge padding. */
+    private data class FullTextSizing(val valueSizeSp: Float, val maxSlotWidthPx: Int)
 
     companion object {
         private val WINDOW = 2.minutes
@@ -442,6 +457,16 @@ class ScrollingGraphDataType(
          * the shortest tiles using this layout, where anything larger would crowd out the bars.
          */
         private const val VALUE_FULL_SIZE_FRACTION = 0.36f
+
+        /**
+         * Content height (below the header) of the shortest tile using the full layout, about
+         * two rows. Taller tiles scale the value up from [VALUE_FULL_SIZE_FRACTION]'s size. An
+         * estimate awaiting on-device tuning.
+         */
+        private const val REFERENCE_CONTENT_HEIGHT_PX = 200f
+
+        /** Cap on the height scaling; the width check usually binds first on full-width tiles. */
+        private const val MAX_VALUE_HEIGHT_SCALE = 2f
 
         private const val MAX_TEXT_SIZE_FRACTION = 0.65f
 
@@ -487,8 +512,11 @@ class ScrollingGraphDataType(
 
         private const val COMPACT_VALUE_MAX_WIDTH_FRACTION = 0.45f
 
-        /** Visual margins are in dp, not shares of the tile. Karoo's own fields leave about 3dp. */
-        private const val VALUE_EDGE_PADDING_DP = 3f
+        /**
+         * Visual margins are in dp, not shares of the tile. Karoo's own value view ends 8px
+         * (~4dp) short of the tile's edge, per a view hierarchy dump.
+         */
+        private const val VALUE_EDGE_PADDING_DP = 4f
 
         private const val VALUE_GRAPH_GAP_DP = 6f
 
