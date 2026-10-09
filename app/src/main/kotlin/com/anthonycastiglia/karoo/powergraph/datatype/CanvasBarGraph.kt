@@ -24,7 +24,7 @@ data class GraphScale(val floor: Double, val minSpan: Double) {
 /**
  * Draws one bar per point within [plotArea], against [scale], with the most recent reading at
  * the plot's right edge. Edges snap to whole pixels so shared boundaries don't flicker as the
- * window scrolls.
+ * window scrolls. Every bar is at least [minBarHeight] tall, so zero readings stay visible.
  */
 fun Canvas.drawBars(
     points: List<Pair<Long, Double>>,
@@ -32,7 +32,8 @@ fun Canvas.drawBars(
     window: Duration,
     sampleInterval: Duration,
     scale: GraphScale,
-    palette: ZonePalette
+    palette: ZonePalette,
+    minBarHeight: Float,
 ) {
     if (points.isEmpty()) return
     val ceiling = scale.ceilingFor(points.maxOf { it.second })
@@ -48,7 +49,8 @@ fun Canvas.drawBars(
     points.forEachIndexed { index, (timestamp, value) ->
         val left = xFor(timestamp)
         val right = if (index < points.lastIndex) xFor(points[index + 1].first) else xFor(windowEnd)
-        val barHeight = plotArea.height() * ((value - scale.floor) / valueSpan).coerceAtLeast(0.0).toFloat()
+        val scaledHeight = plotArea.height() * ((value - scale.floor) / valueSpan).coerceAtLeast(0.0).toFloat()
+        val barHeight = scaledHeight.coerceAtLeast(minBarHeight)
         barPaint.color = palette.colorFor(value)
         drawRect(left, plotArea.bottom - barHeight, right, plotArea.bottom, barPaint)
     }
