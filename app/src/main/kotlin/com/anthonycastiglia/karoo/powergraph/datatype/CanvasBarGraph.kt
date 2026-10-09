@@ -7,36 +7,24 @@ import kotlin.math.roundToInt
 import kotlin.time.Duration
 
 /**
- * The value range a graph's bars are drawn against: from a fixed [floor] at the bottom up to the
- * highest reading in view, but never less than [minSpan] above the floor.
+ * The value range a graph's bars are drawn against: from a fixed [floor] up to the highest
+ * reading in view, but never less than [minSpan] above the floor.
  *
- * A fixed floor keeps a bar's height meaning the same thing from one window to the next -- scaled
- * from the window's own lowest reading instead, that reading always draws at zero height, and a
- * small wobble fills the whole graph. [minSpan] does the same at the top, so a steady stretch of
- * readings doesn't stretch to full height just because nothing higher is in view.
+ * Fixed bounds keep a bar's height meaning the same thing from one window to the next, so a
+ * small wobble doesn't fill the whole graph.
  */
 data class GraphScale(val floor: Double, val minSpan: Double) {
     init {
         require(minSpan > 0) { "minSpan ($minSpan) must be positive" }
     }
 
-    /** The value drawn at the top of the graph, for a window whose highest reading is [highestValue]. */
     fun ceilingFor(highestValue: Double): Double = maxOf(highestValue, floor + minSpan)
 }
 
 /**
- * Bars are drawn within [plotArea], against [scale] from its floor at the plot's bottom up to
- * the highest point at its top, so spikes never clip off the top. The most recent reading ends
- * at the plot's right edge. A reading below the floor draws at zero height rather than below
- * the plot. With no points at all -- nothing has arrived yet, as before a sensor connects --
- * nothing is drawn.
- *
- * Edges snap to whole pixel columns. Two bars sharing a boundary compute it from the same
- * timestamp, so the raw floats already agree bit-for-bit, but that shared value sits at an
- * arbitrary fractional pixel position, drifting every second as the window scrolls.
- * Non-antialiased rect rasterization has to round a fractional boundary to a pixel column,
- * and that rounding isn't guaranteed stable between draws, so rounding here settles it rather
- * than leaving it to the rasterizer.
+ * Draws one bar per point within [plotArea], against [scale], with the most recent reading at
+ * the plot's right edge. Edges snap to whole pixels so shared boundaries don't flicker as the
+ * window scrolls.
  */
 fun Canvas.drawBars(
     points: List<Pair<Long, Double>>,

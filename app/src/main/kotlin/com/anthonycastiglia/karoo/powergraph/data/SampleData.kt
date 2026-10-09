@@ -8,6 +8,7 @@ import kotlin.time.Duration.Companion.seconds
 
 val SAMPLE_INTERVAL = 1.seconds
 
+/** Uniformly random values between [min] and [max], for a preview shaped like power. */
 fun randomDoubles(min: Double, max: Double): Flow<Double> {
     require(min < max) { "min ($min) must be less than max ($max)" }
     return flow {
@@ -18,6 +19,7 @@ fun randomDoubles(min: Double, max: Double): Flow<Double> {
     }
 }
 
+/** Values drifting by at most [maxStepSize] per sample within [min]..[max], for a preview shaped like heart rate. */
 fun randomWalk(start: Double, min: Double, max: Double, maxStepSize: Double): Flow<Double> {
     require(min <= max) { "min ($min) must not exceed max ($max)" }
     require(start in min..max) { "start ($start) must be within $min..$max" }

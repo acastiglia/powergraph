@@ -12,22 +12,14 @@ import io.hammerhead.karooext.models.UserProfile
  */
 class ZonePalette(private val zones: List<UserProfile.Zone>) {
 
-    /**
-     * Zones are ascending by [UserProfile.Zone.min], so a value belongs to the last one whose
-     * floor it has reached -- falling back to the lowest zone for anything below the first floor,
-     * which the rider can reach by coasting below their own zone 1.
-     */
+    /** Falls back to the lowest zone below the first floor (coasting under zone 1). */
     fun colorFor(value: Double): Int {
         if (zones.isEmpty()) return UNZONED_COLOR
         val zoneIndex = zones.indexOfLast { value >= it.min }.coerceAtLeast(0)
         return TrainingZone.entries.getOrElse(zoneIndex) { TrainingZone.entries.last() }.color
     }
 
-    /**
-     * Training zones low to high, matching common cycling zone conventions, each matched to the
-     * rider's configured zone at the same index. Zone count varies by rider (typically 6-7);
-     * zones beyond the last entry here reuse its color.
-     */
+    /** Matched by index to the rider's zones; zones beyond the last entry reuse its color. */
     private enum class TrainingZone(val color: Int) {
         RECOVERY(Color.GRAY),
         ENDURANCE(Color.rgb(0, 120, 215)),
@@ -39,7 +31,6 @@ class ZonePalette(private val zones: List<UserProfile.Zone>) {
     }
 
     companion object {
-        /** For a metric with no zones, or a rider who hasn't configured any. */
         private val UNZONED_COLOR = Color.DKGRAY
     }
 }
