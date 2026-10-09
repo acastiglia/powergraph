@@ -10,16 +10,6 @@
 
     The graph takes the height the text row leaves, rather than the drawing working out where the
     text ended and starting the bars below it. The current value is end-aligned in whatever the
-<<<<<<< Updated upstream
-=======
-<<<<<<< Updated upstream
-    max leaves of the row, the same side as in the compact layout, so its right edge stays put
-    as its digit count changes. The max sits against the tile's left edge, in a slot whose width
-    is set from code, just wide enough for its widest text. It is hidden as invisible, never
-    gone, so it keeps its slot and the value stays put whether or not there is a max to show.
-    Reversing the sides for left-justified text is left for later.
-=======
->>>>>>> Stashed changes
     aggregations leave of the row, the same side as in the compact layout, so its right edge stays
     put as its digit count changes. The aggregations are a two-column table, each column one
     TextView with a line per aggregation: labels justified left, numbers justified right, so
@@ -29,14 +19,8 @@
     padding, also set from code, puts the last line on the value's baseline. The table sits
     against the tile's left edge, each column in a slot whose width is set from code, just
     wide enough for its widest text. Both are hidden as invisible, never gone, so the slots are
-<<<<<<< Updated upstream
-    kept and the value stays put whether or not there is a stat to show. Reversing the sides
-    for left-justified text is left for later.
-=======
     kept and the value stays put while the stats are pending. With no aggregation selected the
     slots are zero-width. Reversing the sides for left-justified text is left for later.
->>>>>>> Stashed changes
->>>>>>> Stashed changes
 -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
@@ -51,7 +35,6 @@
         android:paddingTop="2dp">
 
         <TextView
-<<<<<<< Updated upstream
             android:id="@+id/aggregation_labels"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -82,31 +65,10 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-=======
-            android:id="@+id/max_value"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
->>>>>>> Stashed changes
-            android:fontFamily="monospace"
-            android:gravity="start"
-            android:includeFontPadding="false"
-            android:maxLines="1"
-<<<<<<< Updated upstream
-=======
-            android:paddingEnd="0dp"
-            android:paddingStart="4dp"
-            android:textColor="@android:color/black" />
-
-        <TextView
-            android:id="@+id/value"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
             android:fontFamily="monospace"
             android:gravity="end"
             android:includeFontPadding="false"
             android:maxLines="1"
->>>>>>> Stashed changes
             android:paddingEnd="4dp"
             android:paddingStart="0dp"
             android:textColor="@android:color/black" />

@@ -17,15 +17,9 @@ enum class Aggregation { MAX, AVERAGE, NORMALIZED }
 /**
  * Persisted settings for the data fields, each exposed as a [StateFlow] whose value is always
  * current and updates on every change -- including a change from another instance of this
-<<<<<<< Updated upstream
- * class, such as the settings screen updating a value a running data field reads. The
- * [SharedPreferences] stay the source of truth; the flows are kept live in [scope] and are
- * read-only to callers, who write through the setters.
-=======
  * class in this process, such as the settings screen updating a value a running data field
  * reads. The [SharedPreferences] stay the source of truth; the flows are kept live in [scope]
  * and are read-only to callers, who write through the setters.
->>>>>>> Stashed changes
  *
  * One screen for all fields: power smoothing applies to the power field only, while zone colors and
  * aggregations are set separately for power and heart rate.
@@ -80,13 +74,8 @@ class PowerGraphSettings(context: Context, scope: CoroutineScope) {
 
 /**
  * Wraps a preference key as a [StateFlow] kept live in [scope]: starts at [read] and re-reads
-<<<<<<< Updated upstream
- * whenever [key] changes -- in this process or, since [SharedPreferences] is shared by file
- * name, another one.
-=======
  * whenever [key] changes, including through another [SharedPreferences] instance in this
  * process, such as the settings screen writing while the extension reads.
->>>>>>> Stashed changes
  */
 private fun <T> SharedPreferences.stateFlowOf(
     key: String,
