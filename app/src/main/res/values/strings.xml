@@ -5,6 +5,10 @@
     <string name="datatype_power_graph_desc">Rolling graph of current power output</string>
     <string name="datatype_heart_rate_graph">HR</string>
     <string name="datatype_heart_rate_graph_desc">Rolling graph of current heart rate</string>
+    <string name="datatype_cadence_graph">Cadence</string>
+    <string name="datatype_cadence_graph_desc">Rolling graph of current cadence</string>
+    <string name="datatype_speed_graph">Speed</string>
+    <string name="datatype_speed_graph_desc">Rolling graph of current speed</string>
 
     <string name="setting_smoothing">Smoothing</string>
     <string name="setting_smoothing_description">Averages the current value shown in the field. The graph still plots each reading.</string>
@@ -18,5 +22,7 @@
     <string name="setting_zone_colors_description">When enabled, graph samples are colored by training zone.</string>
     <string name="field_power">Power</string>
     <string name="field_heart_rate">Heart Rate</string>
+    <string name="field_cadence">Cadence</string>
+    <string name="field_speed">Speed</string>
     <string name="zone_colors_enabled">Enabled</string>
 </resources>

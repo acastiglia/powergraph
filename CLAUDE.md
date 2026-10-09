@@ -1,6 +1,6 @@
 # PowerGraph
 
-Karoo (Hammerhead bike computer) extension app, built from the `karoo-ext` template repo. Adds two graphical ride data fields — `power-graph` and `heart-rate-graph` — both scrolling bar graphs colored by training zone, implemented as one reusable `ScrollingGraphDataType`.
+Karoo (Hammerhead bike computer) extension app, built from the `karoo-ext` template repo. Adds graphical ride data fields — `power-graph`, `heart-rate-graph`, `cadence-graph` and `speed-graph`, as listed in `GRAPH_FIELDS` — all scrolling bar graphs, colored by training zone where the metric has zones, implemented as one reusable `ScrollingGraphDataType`.
 
 ## Why
 
@@ -9,7 +9,7 @@ Karoo has no built-in scrolling graph field for power or heart rate; this extens
 ## Structure
 
 - `app/src/main/kotlin/.../SettingsActivity.kt`, `screens/SettingsScreen.kt` — settings screen for the data fields, opened from the Karoo's app drawer (it's the launcher activity). One section per `GRAPH_FIELDS` entry, reading and writing straight through to `PowerGraphSettings`. See `docs/projects/settings-activity.md`.
-- `app/src/main/kotlin/.../data/GraphField.kt` — `GRAPH_FIELDS`: one `GraphField` per data field, holding everything that differs between fields (Karoo stream ids, zones, aggregations, smoothing options, labels). The extension and the settings screen both build from this list. Adding a field also needs an entry in `extension_info.xml`.
+- `app/src/main/kotlin/.../data/GraphField.kt` — `GRAPH_FIELDS`: one `GraphField` per data field, holding everything that differs between fields (Karoo stream ids, zones, aggregations, smoothing options, labels). The extension and the settings screen both build from this list. Adding a field also needs an entry in `extension_info.xml`; `ExtensionInfoTest` (`./gradlew testDebugUnitTest`) fails if the two drift apart.
 - `app/src/main/kotlin/.../data/PowerGraphSettings.kt` — `SharedPreferences`-backed settings store; `forField(field)` gives each field's settings as `StateFlow`s so a change applies live to a running field.
 - `app/src/main/kotlin/.../extension/PowerGraphExtension.kt` — registers the extension, maps `GRAPH_FIELDS` to data types and wires each field's settings into its data type.
 - `app/src/main/kotlin/.../extension/Extensions.kt` — `KarooSystemService` → `Flow` adapters.
