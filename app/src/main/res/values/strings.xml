@@ -13,11 +13,11 @@
     <string name="setting_smoothing">Smoothing</string>
     <string name="setting_smoothing_description">Averages the current value shown in the field. The graph still plots each reading.</string>
     <string name="seconds_format">%ds</string>
-    <string name="setting_aggregations_description">Statistics shown alongside the current value in the full-size layout.</string>
-    <string name="setting_aggregations">Aggregations</string>
-    <string name="aggregation_max">Max</string>
-    <string name="aggregation_average">Average</string>
-    <string name="aggregation_normalized">Normalized</string>
+    <string name="setting_statistics_description">Statistics shown alongside the current value in the full-size layout.</string>
+    <string name="setting_statistics">Statistics</string>
+    <string name="statistic_max">Max</string>
+    <string name="statistic_average">Average</string>
+    <string name="statistic_normalized">Normalized</string>
     <string name="setting_zone_colors">Zone Colors</string>
     <string name="setting_zone_colors_description">When enabled, graph samples are colored by training zone.</string>
     <string name="field_power">Power</string>

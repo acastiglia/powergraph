@@ -30,17 +30,17 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.anthonycastiglia.karoo.powergraph.R
-import com.anthonycastiglia.karoo.powergraph.data.Aggregation
+import com.anthonycastiglia.karoo.powergraph.data.Statistic
 import com.anthonycastiglia.karoo.powergraph.data.FieldSettings
 import com.anthonycastiglia.karoo.powergraph.data.GRAPH_FIELDS
 import com.anthonycastiglia.karoo.powergraph.data.GraphField
 import com.anthonycastiglia.karoo.powergraph.data.PowerGraphSettings
 import com.anthonycastiglia.karoo.powergraph.theme.AppTheme
 
-private val AGGREGATION_SETTING_LABEL_IDS = mapOf(
-    Aggregation.MAX to R.string.aggregation_max,
-    Aggregation.AVERAGE to R.string.aggregation_average,
-    Aggregation.NORMALIZED to R.string.aggregation_normalized,
+private val STATISTIC_SETTING_LABEL_IDS = mapOf(
+    Statistic.MAX to R.string.statistic_max,
+    Statistic.AVERAGE to R.string.statistic_average,
+    Statistic.NORMALIZED to R.string.statistic_normalized,
 )
 
 /**
@@ -68,14 +68,14 @@ fun SettingsScreen() {
 
 /**
  * [field]'s settings under its name: each setting appears only where the field has it --
- * smoothing with [GraphField.smoothing], aggregations with [GraphField.aggregationDataTypes],
- * zone colors with [GraphField.zones]. Aggregations are listed in [Aggregation] order, the order
+ * smoothing with [GraphField.smoothing], statistics with [GraphField.statisticDataTypes],
+ * zone colors with [GraphField.zones]. Statistics are listed in [Statistic] order, the order
  * the field stacks them in.
  */
 @Composable
 private fun FieldSection(field: GraphField, settings: FieldSettings) {
     val smoothingSeconds by settings.smoothingSeconds.collectAsState()
-    val aggregations by settings.aggregations.collectAsState()
+    val statistics by settings.statistics.collectAsState()
     val zoneColors by settings.zoneColors.collectAsState()
 
     Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -100,17 +100,17 @@ private fun FieldSection(field: GraphField, settings: FieldSettings) {
             }
         }
 
-        if (field.aggregationDataTypes.isNotEmpty()) {
+        if (field.statisticDataTypes.isNotEmpty()) {
             SettingsSection(
-                title = R.string.setting_aggregations,
-                description = R.string.setting_aggregations_description,
+                title = R.string.setting_statistics,
+                description = R.string.setting_statistics_description,
             ) {
-                Aggregation.entries.filter { it in field.aggregationDataTypes }.forEach { aggregation ->
+                Statistic.entries.filter { it in field.statisticDataTypes }.forEach { statistic ->
                     CheckRow(
-                        label = stringResource(AGGREGATION_SETTING_LABEL_IDS.getValue(aggregation)),
-                        checked = aggregation in aggregations,
+                        label = stringResource(STATISTIC_SETTING_LABEL_IDS.getValue(statistic)),
+                        checked = statistic in statistics,
                         onCheckedChange = { checked ->
-                            settings.setAggregations(if (checked) aggregations + aggregation else aggregations - aggregation)
+                            settings.setStatistics(if (checked) statistics + statistic else statistics - statistic)
                         },
                     )
                 }

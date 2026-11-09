@@ -13,15 +13,15 @@ import android.util.TypedValue
 import android.view.View
 import android.widget.RemoteViews
 import androidx.core.graphics.createBitmap
-import com.anthonycastiglia.karoo.powergraph.R.id.aggregation_labels
-import com.anthonycastiglia.karoo.powergraph.R.id.aggregation_stats
+import com.anthonycastiglia.karoo.powergraph.R.id.statistic_labels
+import com.anthonycastiglia.karoo.powergraph.R.id.statistic_values
 import com.anthonycastiglia.karoo.powergraph.R.id.graph_image
 import com.anthonycastiglia.karoo.powergraph.R.id.value
 import com.anthonycastiglia.karoo.powergraph.R.id.value_end
 import com.anthonycastiglia.karoo.powergraph.R.id.value_start
 import com.anthonycastiglia.karoo.powergraph.R.layout.view_scrolling_graph
 import com.anthonycastiglia.karoo.powergraph.R.layout.view_scrolling_graph_compact
-import com.anthonycastiglia.karoo.powergraph.data.Aggregation
+import com.anthonycastiglia.karoo.powergraph.data.Statistic
 import com.anthonycastiglia.karoo.powergraph.data.BufferedDataStream
 import com.anthonycastiglia.karoo.powergraph.data.SAMPLE_INTERVAL
 import io.hammerhead.karooext.extension.DataTypeImpl
@@ -60,9 +60,9 @@ private fun Flow<StreamState>.singleValues(): Flow<Double> =
 
 /**
  * Generic scrolling bar graph over any single-value [StreamState] source: one bar per sample
- * over a rolling window, with a current value and the selected [aggregations] text row above,
- * colored by [zonesSource] when [zoneColorsEnabled] allows it. [aggregationSources] holds a
- * ride-wide stat stream for each [Aggregation] the metric has, and only those can be shown;
+ * over a rolling window, with a current value and the selected [statistics] text row above,
+ * colored by [zonesSource] when [zoneColorsEnabled] allows it. [statisticSources] holds a
+ * ride-wide stat stream for each [Statistic] the metric has, and only those can be shown;
  * [zonesSource] is optional for metrics without zones. [previewSource] is the synthetic data
  * shown in the profile editor.
  * [currentValueSmoothingSeconds] averages the displayed current value over a trailing window
@@ -75,8 +75,8 @@ class ScrollingGraphDataType(
     private val previewSource: Flow<Double>,
     private val scale: GraphScale,
     private val unitLabel: String = "",
-    private val aggregationSources: Map<Aggregation, Flow<StreamState>> = emptyMap(),
-    private val aggregations: StateFlow<Set<Aggregation>> = MutableStateFlow(emptySet()),
+    private val statisticSources: Map<Statistic, Flow<StreamState>> = emptyMap(),
+    private val statistics: StateFlow<Set<Statistic>> = MutableStateFlow(emptySet()),
     private val zonesSource: Flow<List<UserProfile.Zone>>? = null,
     private val zoneColorsEnabled: StateFlow<Boolean> = MutableStateFlow(true),
     private val currentValueSmoothingSeconds: StateFlow<Int> = MutableStateFlow(0),
@@ -145,9 +145,9 @@ class ScrollingGraphDataType(
         val plot = plotFor(graphSize, compactLayout, context.resources.displayMetrics.density)
         val activeBuffer = bufferFor(config, viewScope)
         val rideStats = rideStatsFor(config, viewScope)
-        var cachedSizing: Pair<List<Aggregation>, FullTextSizing>? = null
+        var cachedSizing: Pair<List<Statistic>, FullTextSizing>? = null
 
-        fun sizingFor(shown: List<Aggregation>): FullTextSizing =
+        fun sizingFor(shown: List<Statistic>): FullTextSizing =
             cachedSizing?.takeIf { it.first == shown }?.second
                 ?: fullTextSizing(
                     context,
@@ -165,13 +165,13 @@ class ScrollingGraphDataType(
                     val graph = drawGraph(points, graphSize, plot)
                     emitter.updateView(
                         if (compactLayout == null) {
-                            val shown = shownAggregations()
+                            val shown = shownStatistics()
                             val stats = if (config.preview) previewStats(points) else rideStats.value
                             val sizing = sizingFor(shown)
-                            val aggregationValues = shown.mapNotNull { aggregation ->
-                                stats[aggregation]?.let { aggregation to it }
+                            val statisticValues = shown.mapNotNull { statistic ->
+                                stats[statistic]?.let { statistic to it }
                             }
-                            fullLayoutViews(context, graph, currentValue, aggregationValues, sizing)
+                            fullLayoutViews(context, graph, currentValue, statisticValues, sizing)
                         } else {
                             compactLayoutViews(context, graph, currentValue, compactLayout)
                         },
@@ -263,23 +263,23 @@ class ScrollingGraphDataType(
         }
 
     /**
-     * The selected [aggregations] this metric has a source for, in [Aggregation] declaration
+     * The selected [statistics] this metric has a source for, in [Statistic] declaration
      * order, so the stacked values always appear in the same order whatever the order they were
      * selected in.
      */
-    private fun shownAggregations(): List<Aggregation> =
-        Aggregation.entries.filter { it in aggregations.value && it in aggregationSources }
+    private fun shownStatistics(): List<Statistic> =
+        Statistic.entries.filter { it in statistics.value && it in statisticSources }
 
     /**
-     * The latest ride-wide value of each [aggregationSources] stat seen so far, collected for as
+     * The latest ride-wide value of each [statisticSources] stat seen so far, collected for as
      * long as [viewScope] lives. Empty in preview, which has no ride; see [previewStats].
      */
-    private fun rideStatsFor(config: ViewConfig, viewScope: CoroutineScope): StateFlow<Map<Aggregation, Double>> {
-        val stats = MutableStateFlow<Map<Aggregation, Double>>(emptyMap())
+    private fun rideStatsFor(config: ViewConfig, viewScope: CoroutineScope): StateFlow<Map<Statistic, Double>> {
+        val stats = MutableStateFlow<Map<Statistic, Double>>(emptyMap())
         if (config.preview) return stats
-        aggregationSources.forEach { (aggregation, source) ->
+        statisticSources.forEach { (statistic, source) ->
             viewScope.launch {
-                source.singleValues().collect { value -> stats.update { it + (aggregation to value) } }
+                source.singleValues().collect { value -> stats.update { it + (statistic to value) } }
             }
         }
         return stats
@@ -289,13 +289,13 @@ class ScrollingGraphDataType(
      * Stand-ins for the ride-wide stats, worked out from the synthetic [points] in the window:
      * their max, their mean, and the fourth-power mean that normalized power is built on.
      */
-    private fun previewStats(points: List<Pair<Long, Double>>): Map<Aggregation, Double> {
+    private fun previewStats(points: List<Pair<Long, Double>>): Map<Statistic, Double> {
         val values = points.map { it.second }
         if (values.isEmpty()) return emptyMap()
         return mapOf(
-            Aggregation.MAX to values.max(),
-            Aggregation.AVERAGE to values.average(),
-            Aggregation.NORMALIZED to values.map { it.pow(4) }.average().pow(0.25),
+            Statistic.MAX to values.max(),
+            Statistic.AVERAGE to values.average(),
+            Statistic.NORMALIZED to values.map { it.pow(4) }.average().pow(0.25),
         )
     }
 
@@ -339,42 +339,42 @@ class ScrollingGraphDataType(
 
     /**
      * The full layout: the current value on the right, as in the compact layout, and the
-     * [aggregationValues] stacked one per line on the left, in a row above the graph, as a
+     * [statisticValues] stacked one per line on the left, in a row above the graph, as a
      * column of labels beside a right-aligned column of numbers so the numbers line up. The
-     * aggregation block is hidden while its stats are pending, but keeps its slot so the value
+     * statistics block is hidden while its stats are pending, but keeps its slot so the value
      * never moves.
      */
     private fun fullLayoutViews(
         context: Context,
         graph: Bitmap,
         currentValue: Double,
-        aggregationValues: List<Pair<Aggregation, Double>>,
+        statisticValues: List<Pair<Statistic, Double>>,
         sizing: FullTextSizing,
     ): RemoteViews = RemoteViews(context.packageName, view_scrolling_graph).apply {
         setImageViewBitmap(graph_image, graph)
         setTextViewText(value, formatValue(currentValue))
         setTextViewTextSize(value, TypedValue.COMPLEX_UNIT_SP, sizing.valueSizeSp)
-        val visibility = if (aggregationValues.isEmpty()) View.INVISIBLE else View.VISIBLE
-        setInt(aggregation_labels, "setWidth", sizing.aggregationLabelSlotWidthPx)
-        setInt(aggregation_stats, "setWidth", sizing.aggregationStatSlotWidthPx)
+        val visibility = if (statisticValues.isEmpty()) View.INVISIBLE else View.VISIBLE
+        setInt(statistic_labels, "setWidth", sizing.statisticLabelSlotWidthPx)
+        setInt(statistic_values, "setWidth", sizing.statisticValueSlotWidthPx)
         setViewPadding(
-            aggregation_labels,
-            sizing.aggregationStartPaddingPx,
+            statistic_labels,
+            sizing.statisticStartPaddingPx,
             0,
             0,
-            sizing.aggregationBottomPaddingPx,
+            sizing.statisticBottomPaddingPx,
         )
-        setViewPadding(aggregation_stats, sizing.aggregationLabelGapPx, 0, 0, sizing.aggregationBottomPaddingPx)
-        setViewVisibility(aggregation_labels, visibility)
-        setViewVisibility(aggregation_stats, visibility)
-        if (aggregationValues.isNotEmpty()) {
+        setViewPadding(statistic_values, sizing.statisticLabelGapPx, 0, 0, sizing.statisticBottomPaddingPx)
+        setViewVisibility(statistic_labels, visibility)
+        setViewVisibility(statistic_values, visibility)
+        if (statisticValues.isNotEmpty()) {
             setTextViewText(
-                aggregation_labels,
-                aggregationValues.joinToString("\n") { AGGREGATION_SHORT_LABELS.getValue(it.first) },
+                statistic_labels,
+                statisticValues.joinToString("\n") { STATISTIC_SHORT_LABELS.getValue(it.first) },
             )
-            setTextViewText(aggregation_stats, aggregationValues.joinToString("\n") { formatValue(it.second) })
-            setTextViewTextSize(aggregation_labels, TypedValue.COMPLEX_UNIT_SP, sizing.aggregationSizeSp)
-            setTextViewTextSize(aggregation_stats, TypedValue.COMPLEX_UNIT_SP, sizing.aggregationSizeSp)
+            setTextViewText(statistic_values, statisticValues.joinToString("\n") { formatValue(it.second) })
+            setTextViewTextSize(statistic_labels, TypedValue.COMPLEX_UNIT_SP, sizing.statisticSizeSp)
+            setTextViewTextSize(statistic_values, TypedValue.COMPLEX_UNIT_SP, sizing.statisticSizeSp)
         }
     }
 
@@ -484,9 +484,9 @@ class ScrollingGraphDataType(
 
     /**
      * Text size in sp for the full layout's value row, the size for each of the stacked
-     * [aggregations] beside it, and the width of their slot.
+     * [statistics] beside it, and the width of their slot.
      *
-     * The aggregations are at [AGGREGATION_TEXT_SIZE_FRACTION] of the value's size when there's
+     * The statistics are at [STATISTIC_TEXT_SIZE_FRACTION] of the value's size when there's
      * one. Stacked, they shrink until the digits of the top line to the bottom line cover exactly
      * the height of the value's digits, and the bottom line sits on the value's baseline.
      *
@@ -496,8 +496,8 @@ class ScrollingGraphDataType(
      * tiles have room for it; the nominal height varies by a pixel or two between fields of the
      * same gridSize, which this accepts as negligible at this scale.
      *
-     * Shrunk further if the widest value and aggregation wouldn't fit side by side. The
-     * aggregations get a slot just wide enough for their widest text, and the value the rest of
+     * Shrunk further if the widest value and statistic wouldn't fit side by side. The
+     * statistics get a slot just wide enough for their widest text, and the value the rest of
      * the row. The slot is kept before the stats arrive, so the value never moves.
      */
     private fun fullTextSizing(
@@ -505,7 +505,7 @@ class ScrollingGraphDataType(
         textSize: Int,
         viewWidth: Int,
         viewHeight: Int,
-        aggregations: List<Aggregation>,
+        statistics: List<Statistic>,
     ): FullTextSizing {
         val metrics = context.resources.displayMetrics
         val heightScale = ((viewHeight - HEADER_HEIGHT_PX) / REFERENCE_CONTENT_HEIGHT_PX)
@@ -520,11 +520,11 @@ class ScrollingGraphDataType(
 
         val valueWidth = widthAt("$CURRENT_VALUE_DIGIT_TEMPLATE$unitLabel", valueSp)
         val reference = referencePaint()
-        val aggregationSp = valueSp * aggregationFraction(aggregations.size, reference)
-        val labelWidth = aggregations
-            .maxOfOrNull { widthAt(AGGREGATION_SHORT_LABELS.getValue(it), aggregationSp) } ?: 0f
-        val labelGapWidth = widthAt(" ", aggregationSp)
-        val statWidth = widthAt(formatValue(TEMPLATE_STAT), aggregationSp)
+        val statisticSp = valueSp * statisticFraction(statistics.size, reference)
+        val labelWidth = statistics
+            .maxOfOrNull { widthAt(STATISTIC_SHORT_LABELS.getValue(it), statisticSp) } ?: 0f
+        val labelGapWidth = widthAt(" ", statisticSp)
+        val statWidth = widthAt(formatValue(TEMPLATE_STAT), statisticSp)
         val edgePaddingPx = (VALUE_EDGE_PADDING_DP * metrics.density).roundToInt()
         val availableWidth = viewWidth - 2 * edgePaddingPx - 1
         val worstCaseWidth = valueWidth + labelWidth + labelGapWidth + statWidth
@@ -533,16 +533,16 @@ class ScrollingGraphDataType(
         val labelSlotWidthPx = ceil(labelWidth * shrink).toInt() + edgePaddingPx
         val statSlotWidthPx = ceil(statWidth * shrink).toInt() + labelGapPx
         fun spToPx(sp: Float) = TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_SP, sp, metrics)
-        val bottomPaddingPx = descentGapPx(reference, spToPx(valueSp * shrink), spToPx(aggregationSp * shrink))
-        val shown = aggregations.isNotEmpty()
+        val bottomPaddingPx = descentGapPx(reference, spToPx(valueSp * shrink), spToPx(statisticSp * shrink))
+        val shown = statistics.isNotEmpty()
         return FullTextSizing(
             valueSizeSp = valueSp * shrink,
-            aggregationSizeSp = aggregationSp * shrink,
-            aggregationLabelSlotWidthPx = if (shown) labelSlotWidthPx else 0,
-            aggregationStatSlotWidthPx = if (shown) statSlotWidthPx else 0,
-            aggregationStartPaddingPx = edgePaddingPx,
-            aggregationLabelGapPx = labelGapPx,
-            aggregationBottomPaddingPx = bottomPaddingPx.roundToInt(),
+            statisticSizeSp = statisticSp * shrink,
+            statisticLabelSlotWidthPx = if (shown) labelSlotWidthPx else 0,
+            statisticValueSlotWidthPx = if (shown) statSlotWidthPx else 0,
+            statisticStartPaddingPx = edgePaddingPx,
+            statisticLabelGapPx = labelGapPx,
+            statisticBottomPaddingPx = bottomPaddingPx.roundToInt(),
         )
     }
 
@@ -553,16 +553,16 @@ class ScrollingGraphDataType(
     }
 
     /**
-     * The aggregation text size as a fraction of the value's: [AGGREGATION_TEXT_SIZE_FRACTION]
+     * The statistic text size as a fraction of the value's: [STATISTIC_TEXT_SIZE_FRACTION]
      * for one, and for [count] stacked, whatever makes the digits from the top line to the bottom
      * line as tall as the value's digits, if that is smaller. Measured on [reference].
      */
-    private fun aggregationFraction(count: Int, reference: Paint): Float {
-        if (count <= 1) return AGGREGATION_TEXT_SIZE_FRACTION
+    private fun statisticFraction(count: Int, reference: Paint): Float {
+        if (count <= 1) return STATISTIC_TEXT_SIZE_FRACTION
         val digitHeight = Rect().also { reference.getTextBounds("9", 0, 1, it) }.height()
         val lineHeight = reference.descent() - reference.ascent()
         val stackedFraction = digitHeight / ((count - 1) * lineHeight + digitHeight)
-        return minOf(AGGREGATION_TEXT_SIZE_FRACTION, stackedFraction)
+        return minOf(STATISTIC_TEXT_SIZE_FRACTION, stackedFraction)
     }
 
     /**
@@ -573,20 +573,20 @@ class ScrollingGraphDataType(
         reference.descent() / REFERENCE_TEXT_SIZE_PX * (largerPx - smallerPx)
 
     /**
-     * The aggregations are two columns: labels, then right-aligned numbers. Each slot's width
-     * includes its start padding, [aggregationStartPaddingPx] for the labels and
-     * [aggregationLabelGapPx] between them and the numbers, and both are zero with none shown.
-     * [aggregationBottomPaddingPx] is the gap between the value's descent and the smaller
-     * aggregations', which lifts the bottom line onto the value's baseline.
+     * The statistics are two columns: labels, then right-aligned numbers. Each slot's width
+     * includes its start padding, [statisticStartPaddingPx] for the labels and
+     * [statisticLabelGapPx] between them and the numbers, and both are zero with none shown.
+     * [statisticBottomPaddingPx] is the gap between the value's descent and the smaller
+     * statistics', which lifts the bottom line onto the value's baseline.
      */
     private data class FullTextSizing(
         val valueSizeSp: Float,
-        val aggregationSizeSp: Float,
-        val aggregationLabelSlotWidthPx: Int,
-        val aggregationStatSlotWidthPx: Int,
-        val aggregationStartPaddingPx: Int,
-        val aggregationLabelGapPx: Int,
-        val aggregationBottomPaddingPx: Int,
+        val statisticSizeSp: Float,
+        val statisticLabelSlotWidthPx: Int,
+        val statisticValueSlotWidthPx: Int,
+        val statisticStartPaddingPx: Int,
+        val statisticLabelGapPx: Int,
+        val statisticBottomPaddingPx: Int,
     )
 
     companion object {
@@ -611,8 +611,8 @@ class ScrollingGraphDataType(
         /** Cap on the height scaling; the width check usually binds first on full-width tiles. */
         private const val MAX_VALUE_HEIGHT_SCALE = 2f
 
-        /** A lone aggregation's size as a fraction of the current value's. */
-        private const val AGGREGATION_TEXT_SIZE_FRACTION = 0.65f
+        /** A lone statistic's size as a fraction of the current value's. */
+        private const val STATISTIC_TEXT_SIZE_FRACTION = 0.65f
 
         /**
          * Size the font is measured at to get its digit height, line height and descent, which all
@@ -620,10 +620,10 @@ class ScrollingGraphDataType(
          */
         private const val REFERENCE_TEXT_SIZE_PX = 100f
 
-        private val AGGREGATION_SHORT_LABELS = mapOf(
-            Aggregation.MAX to "MAX",
-            Aggregation.AVERAGE to "AVG",
-            Aggregation.NORMALIZED to "NP",
+        private val STATISTIC_SHORT_LABELS = mapOf(
+            Statistic.MAX to "MAX",
+            Statistic.AVERAGE to "AVG",
+            Statistic.NORMALIZED to "NP",
         )
 
         /** Sizes the full layout's header row so a change in digit count never moves anything. */

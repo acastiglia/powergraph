@@ -13,7 +13,7 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.stateIn
 
 /** A statistic shown alongside the current value in the full-size layout. */
-enum class Aggregation { MAX, AVERAGE, NORMALIZED }
+enum class Statistic { MAX, AVERAGE, NORMALIZED }
 
 /**
  * Persisted settings for the data fields, one [FieldSettings] per [GRAPH_FIELDS] entry, all
@@ -51,7 +51,7 @@ class FieldSettings internal constructor(
 ) {
     private val smoothingKey = "${field.settingsKey}_smoothing_seconds"
     private val zoneColorsKey = "${field.settingsKey}_zone_colors"
-    private val aggregationsKey = "${field.settingsKey}_aggregations"
+    private val statisticsKey = "${field.settingsKey}_statistics"
 
     val smoothingSeconds: StateFlow<Int> = field.smoothing?.let { options ->
         prefs.stateFlowOf(smoothingKey, scope) { getInt(smoothingKey, options.defaultSeconds) }
@@ -61,22 +61,22 @@ class FieldSettings internal constructor(
         getBoolean(zoneColorsKey, DEFAULT_ZONE_COLORS)
     }
 
-    val aggregations: StateFlow<Set<Aggregation>> = prefs.stateFlowOf(aggregationsKey, scope) {
-        getStringSet(aggregationsKey, null)
-            ?.mapNotNullTo(mutableSetOf()) { stored -> Aggregation.entries.find { it.name == stored } }
-            ?: DEFAULT_AGGREGATIONS
+    val statistics: StateFlow<Set<Statistic>> = prefs.stateFlowOf(statisticsKey, scope) {
+        getStringSet(statisticsKey, null)
+            ?.mapNotNullTo(mutableSetOf()) { stored -> Statistic.entries.find { it.name == stored } }
+            ?: DEFAULT_STATISTICS
     }
 
     fun setSmoothingSeconds(seconds: Int) = prefs.edit { putInt(smoothingKey, seconds) }
 
     fun setZoneColors(enabled: Boolean) = prefs.edit { putBoolean(zoneColorsKey, enabled) }
 
-    fun setAggregations(aggregations: Set<Aggregation>) =
-        prefs.edit { putStringSet(aggregationsKey, aggregations.mapTo(mutableSetOf()) { it.name }) }
+    fun setStatistics(statistics: Set<Statistic>) =
+        prefs.edit { putStringSet(statisticsKey, statistics.mapTo(mutableSetOf()) { it.name }) }
 
     private companion object {
         const val DEFAULT_ZONE_COLORS = true
-        val DEFAULT_AGGREGATIONS = setOf(Aggregation.MAX)
+        val DEFAULT_STATISTICS = setOf(Statistic.MAX)
     }
 }
 

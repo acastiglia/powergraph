@@ -40,7 +40,7 @@ Power Graph runs on Karoo devices that support extensions (Karoo 2 and Karoo 3 w
 Open **Power Graph** from the Karoo's app drawer. Each data field has its own settings, and changes apply to fields already on screen.
 
 - **Smoothing** (power and cadence): average the current value over 1, 3, 10 or 30 seconds. The graph still plots every reading.
-- **Aggregations**: choose which ride statistics appear beside the current value on larger fields.
+- **Statistics**: choose which ride statistics appear beside the current value on larger fields.
 - **Zone Colors** (power and heart rate): color the bars by training zone, or show plain gray bars.
 
 ## Building from source

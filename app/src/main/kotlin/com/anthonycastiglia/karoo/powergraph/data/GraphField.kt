@@ -18,8 +18,8 @@ import kotlinx.coroutines.flow.Flow
  * settings screen has no Karoo connection to open them; the extension resolves them.
  *
  * [typeId] must match the field's declaration in extension_info.xml. [settingsKey] prefixes the
- * field's preference keys. [aggregationDataTypes] holds a ride-wide stat stream for each
- * [Aggregation] the metric has, and only those are offered or shown. [zones] picks the field's
+ * field's preference keys. [statisticDataTypes] holds a ride-wide stat stream for each
+ * [Statistic] the metric has, and only those are offered or shown. [zones] picks the field's
  * zones from the rider's profile, null for a metric without zones. [smoothing] is null for a
  * field whose current value is never smoothed. [displayFactor] converts the field's values from
  * the units Karoo streams them in to the ones the rider sees, chosen from their profile; null
@@ -30,7 +30,7 @@ class GraphField(
     val settingsKey: String,
     @StringRes val label: Int,
     val dataType: String,
-    val aggregationDataTypes: Map<Aggregation, String>,
+    val statisticDataTypes: Map<Statistic, String>,
     val zones: ((UserProfile) -> List<UserProfile.Zone>)? = null,
     val smoothing: SmoothingOptions? = null,
     val displayFactor: ((UserProfile) -> Double)? = null,
@@ -48,10 +48,10 @@ val GRAPH_FIELDS = listOf(
         settingsKey = "power",
         label = field_power,
         dataType = DataType.Type.POWER,
-        aggregationDataTypes = mapOf(
-            Aggregation.MAX to DataType.Type.MAX_POWER,
-            Aggregation.AVERAGE to DataType.Type.AVERAGE_POWER,
-            Aggregation.NORMALIZED to DataType.Type.NORMALIZED_POWER,
+        statisticDataTypes = mapOf(
+            Statistic.MAX to DataType.Type.MAX_POWER,
+            Statistic.AVERAGE to DataType.Type.AVERAGE_POWER,
+            Statistic.NORMALIZED to DataType.Type.NORMALIZED_POWER,
         ),
         zones = { it.powerZones },
         smoothing = SmoothingOptions(seconds = listOf(1, 3, 10, 30), defaultSeconds = 3),
@@ -63,9 +63,9 @@ val GRAPH_FIELDS = listOf(
         settingsKey = "heart_rate",
         label = field_heart_rate,
         dataType = DataType.Type.HEART_RATE,
-        aggregationDataTypes = mapOf(
-            Aggregation.MAX to DataType.Type.MAX_HR,
-            Aggregation.AVERAGE to DataType.Type.AVERAGE_HR,
+        statisticDataTypes = mapOf(
+            Statistic.MAX to DataType.Type.MAX_HR,
+            Statistic.AVERAGE to DataType.Type.AVERAGE_HR,
         ),
         zones = { it.heartRateZones },
         smoothing = null,
@@ -77,9 +77,9 @@ val GRAPH_FIELDS = listOf(
         settingsKey = "cadence",
         label = field_cadence,
         dataType = DataType.Type.CADENCE,
-        aggregationDataTypes = mapOf(
-            Aggregation.MAX to DataType.Type.MAX_CADENCE,
-            Aggregation.AVERAGE to DataType.Type.AVERAGE_CADENCE,
+        statisticDataTypes = mapOf(
+            Statistic.MAX to DataType.Type.MAX_CADENCE,
+            Statistic.AVERAGE to DataType.Type.AVERAGE_CADENCE,
         ),
         smoothing = SmoothingOptions(seconds = listOf(1, 3, 10, 30), defaultSeconds = 1),
         scale = GraphScale(floor = 0.0, minSpan = 60.0),
@@ -90,9 +90,9 @@ val GRAPH_FIELDS = listOf(
         settingsKey = "speed",
         label = field_speed,
         dataType = DataType.Type.SPEED,
-        aggregationDataTypes = mapOf(
-            Aggregation.MAX to DataType.Type.MAX_SPEED,
-            Aggregation.AVERAGE to DataType.Type.AVERAGE_SPEED,
+        statisticDataTypes = mapOf(
+            Statistic.MAX to DataType.Type.MAX_SPEED,
+            Statistic.AVERAGE to DataType.Type.AVERAGE_SPEED,
         ),
         displayFactor = ::speedDisplayFactor,
         scale = GraphScale(floor = 0.0, minSpan = 20.0),
